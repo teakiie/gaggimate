@@ -42,6 +42,13 @@ class GaggiMateClient {
     bool isConnected() const { return _endpoint.isConnected(); }
     void disconnect() { _transport.disconnect(); }
 
+    // BLE round-trip latency (ms) measured by the reliability layer (send -> ACK).
+    // EWMA-smoothed; refreshed at least every ~2s by the keep-alive ping plus on
+    // every control update. hasLatency() is false until the first ACK of a link.
+    uint32_t getLatencyMs() const { return _endpoint.latencyMs(); }
+    uint32_t getLastLatencyMs() const { return _endpoint.lastLatencyMs(); }
+    bool hasLatency() const { return _endpoint.hasLatency(); }
+
     // Tight connection interval (responsive control) while active; relaxed when
     // idle to give the shared radio back to Wi-Fi.
     void setLowLatency(bool active) { _transport.setLowLatency(active); }

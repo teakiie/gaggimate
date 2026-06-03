@@ -1,7 +1,7 @@
 #include "WebUIPlugin.h"
 #include <DNSServer.h>
+#include <LittleFS.h>
 #include <SD_MMC.h>
-#include <SPIFFS.h>
 #include <algorithm>
 #include <display/core/Controller.h>
 #include <display/core/ProfileManager.h>
@@ -122,9 +122,13 @@ void WebUIPlugin::loop() {
         statusDoc["wl"] = controller->getWaterLevel();
         statusDoc["tof"] = controller->getTofDistance();
         statusDoc["rssi"] = 0;
+        statusDoc["lat"] = -1; // BLE round-trip latency (ms); -1 = not yet measured
 
         if (controller->getClientController()->getClient()->isConnected()) {
             statusDoc["rssi"] = controller->getClientController()->getClient()->getRssi();
+        }
+        if (controller->getClientController()->hasLatency()) {
+            statusDoc["lat"] = controller->getClientController()->getLatencyMs();
         }
 
         bool bleConnected = BLEScales.isConnected();
@@ -227,7 +231,7 @@ void WebUIPlugin::setupServer() {
     server.on("/api/scales/connect", [this](AsyncWebServerRequest *request) { handleBLEScaleConnect(request); });
     server.on("/api/scales/scan", [this](AsyncWebServerRequest *request) { handleBLEScaleScan(request); });
     server.on("/api/scales/info", [this](AsyncWebServerRequest *request) { handleBLEScaleInfo(request); });
-    FS *fs = &SPIFFS;
+    FS *fs = &LittleFS;
     if (controller->isSDCard()) {
         fs = &SD_MMC;
     }
@@ -241,14 +245,14 @@ void WebUIPlugin::setupServer() {
         }
     });
     server.on("/api/core-dump", HTTP_GET, [this](AsyncWebServerRequest *request) { handleCoreDumpDownload(request); });
-    server.onNotFound([](AsyncWebServerRequest *request) { request->send(SPIFFS, "/w/index.html"); });
+    server.onNotFound([](AsyncWebServerRequest *request) { request->send(LittleFS, "/w/index.html"); });
     // Content-hashed build assets (Vite emits them under /assets/ with a hash in the filename) never change for a
     // given URL, so let the browser cache them forever and skip the revalidation round-trip entirely. This must be
     // registered before the catch-all "/" handler so it wins for /assets/* requests. [GM-83]
-    server.serveStatic("/assets/", SPIFFS, "/w/assets/").setCacheControl("public, max-age=31536000, immutable");
+    server.serveStatic("/assets/", LittleFS, "/w/assets/").setCacheControl("public, max-age=31536000, immutable");
     // index.html and other unhashed root files must stay revalidated so a new build (which references freshly
     // hashed assets) is always picked up after an OTA/filesystem update.
-    server.serveStatic("/", SPIFFS, "/w").setDefaultFile("index.html").setCacheControl("no-cache");
+    server.serveStatic("/", LittleFS, "/w").setDefaultFile("index.html").setCacheControl("no-cache");
     ws.onEvent(
         [this](AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
             if (type == WS_EVT_CONNECT) {
@@ -802,10 +806,10 @@ void WebUIPlugin::updateOTAStatus(const String &version) {
     doc["latestVersion"] = ota->getCurrentVersion();
     doc["channel"] = settings.getOTAChannel();
     doc["updating"] = updating;
-    // SPIFFS usage metrics
+    // LittleFS usage metrics
     {
-        size_t total = SPIFFS.totalBytes();
-        size_t used = SPIFFS.usedBytes();
+        size_t total = LittleFS.totalBytes();
+        size_t used = LittleFS.usedBytes();
         size_t freeBytes = total > used ? (total - used) : 0;
         doc["spiffsTotal"] = static_cast<uint32_t>(total);
         doc["spiffsUsed"] = static_cast<uint32_t>(used);

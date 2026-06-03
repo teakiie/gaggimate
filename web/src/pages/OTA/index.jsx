@@ -29,6 +29,7 @@ export function OTA() {
   const [phase, setPhase] = useState(0);
   const [progress, setProgress] = useState(0);
   const rssi = machine.value.status.rssi;
+  const lat = machine.value.status.lat;
 
   const downloadSupportData = useCallback(async () => {
     const settingsResponse = await fetch(`/api/settings`);
@@ -206,7 +207,7 @@ export function OTA() {
             <div className='flex flex-col space-y-4'>
               <label className='mb-2 block text-sm font-medium'>Controller Signal Strength</label>
               <span className='font-light'>
-                {rssi}dB{' '}
+                {rssi}dB (Roundtrip: {lat} ms)
                 <span
                   className={`indicator-item status ml-2 ${rssi < -90 ? 'status-error' : rssi < -80 ? 'status-warning' : 'status-success'}`}
                 ></span>
@@ -215,7 +216,7 @@ export function OTA() {
 
             {formData.spiffsTotal !== undefined && (
               <div className='flex flex-col space-y-2'>
-                <label className='mb-2 block text-sm font-medium'>Storage (SPIFFS)</label>
+                <label className='mb-2 block text-sm font-medium'>Storage (LittleFS)</label>
                 <div className='flex flex-col gap-1'>
                   <div className='bg-base-300 h-3 w-full overflow-hidden rounded'>
                     <div

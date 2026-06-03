@@ -11,7 +11,7 @@
 #include <display/core/Plugin.h>
 #include <display/util/PsramAllocator.h>
 
-constexpr size_t UPDATE_CHECK_INTERVAL = 5 * 60 * 1000;
+constexpr size_t UPDATE_CHECK_INTERVAL = 30 * 60 * 1000;
 constexpr size_t CLEANUP_PERIOD = 5 * 1000;
 constexpr size_t STATUS_PERIOD = 500;
 constexpr size_t DNS_PERIOD = 50;

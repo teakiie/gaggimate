@@ -1,7 +1,7 @@
 #include "ShotHistoryPlugin.h"
 
+#include <LittleFS.h>
 #include <SD_MMC.h>
-#include <SPIFFS.h>
 #include <cmath>
 #include <display/core/Controller.h>
 #include <display/core/ProfileManager.h>
@@ -429,8 +429,8 @@ size_t ShotHistoryPlugin::getFreeSpace() {
         // Cap to size_t max for consistency
         return free > SIZE_MAX ? SIZE_MAX : static_cast<size_t>(free);
     }
-    size_t total = SPIFFS.totalBytes();
-    size_t used = SPIFFS.usedBytes();
+    size_t total = LittleFS.totalBytes();
+    size_t used = LittleFS.usedBytes();
     return total > used ? (total - used) : 0;
 }
 
@@ -924,7 +924,6 @@ void ShotHistoryPlugin::rebuildIndex() {
     if (maxId > controller->getSettings().getHistoryIndex()) {
         controller->getSettings().setHistoryIndex(maxId);
     }
-
 
     // Emit completion event
     if (pluginManager) {

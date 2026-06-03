@@ -1,8 +1,9 @@
 #include "Controller.h"
 #include "ArduinoJson.h"
+#include "esp_coexist.h"
 #include "esp_sntp.h"
+#include <LittleFS.h>
 #include <SD_MMC.h>
-#include <SPIFFS.h>
 #include <cmath>
 #include <ctime>
 #include <display/config.h>
@@ -35,8 +36,14 @@ const String LOG_TAG = F("Controller");
 void Controller::setup() {
     mode = settings.getStartupMode();
 
-    if (!SPIFFS.begin(true)) {
-        Serial.println(F("An Error has occurred while mounting SPIFFS"));
+    // Web assets are served from this partition. LittleFS (not SPIFFS): SPIFFS
+    // has no directory tree, so stat()/exists() is O(whole filesystem) and a
+    // miss scans every page -- the web handler does that synchronously in the
+    // async_tcp task for every request, which under a multi-tab load burst
+    // pegged CPU0 for >5s and tripped the task watchdog (reboot). LittleFS
+    // lookups are O(path). maxOpenFiles 16 for concurrent asset serving. [GM-90]
+    if (!LittleFS.begin(true, "/littlefs", 16)) {
+        Serial.println(F("An Error has occurred while mounting LittleFS"));
     }
 
 #ifndef GAGGIMATE_HEADLESS
@@ -52,7 +59,7 @@ void Controller::setup() {
         ESP_LOGI(LOG_TAG, "Used: %lluMB, Capacity: %lluMB", SD_MMC.usedBytes() / 1024 / 1024, SD_MMC.cardSize() / 1024 / 1024);
     }
 #endif
-    FS *fs = &SPIFFS;
+    FS *fs = &LittleFS;
     if (sdcard) {
         fs = &SD_MMC;
     }
@@ -183,6 +190,11 @@ void Controller::setupBluetooth() {
         if (event.getString("component") != "display") {
             connLowLatency = true;
             comms.setLowLatency(true);
+            // Streaming firmware over BLE -> BLE must win the shared radio, same
+            // as during a shot. Without this it would run against the new
+            // idle WiFi-preference and crawl. Restored by applyConnectionPriority
+            // on ota:update:end. [GM-90]
+            esp_coex_preference_set(ESP_COEX_PREFER_BT);
         }
     });
     pluginManager->on("ota:update:end", [this](Event const &) { applyConnectionPriority(true); });
@@ -555,6 +567,15 @@ void Controller::applyConnectionPriority(bool force) {
     if (force || lowLatency != connLowLatency) {
         connLowLatency = lowLatency;
         comms.setLowLatency(lowLatency);
+        // Steer the shared-radio coexistence arbiter to match. WiFi and BLE
+        // share one 2.4GHz radio; the arbiter decides who wins on contention.
+        // During a shot the BLE control loop (7.5-10ms interval, pressure/flow
+        // feedback) must win, so prefer BT. When idle there is no tight BLE
+        // deadline, so prefer WiFi to keep the web UI / network responsive --
+        // the chronic coex failure mode is WiFi getting starved and the whole
+        // IP stack wedging. Default coex preference is BALANCE; nobody set this
+        // before. Best-effort: ignore the return (no-op if coex inactive). [GM-90]
+        esp_coex_preference_set(lowLatency ? ESP_COEX_PREFER_BT : ESP_COEX_PREFER_WIFI);
     }
 }
 
