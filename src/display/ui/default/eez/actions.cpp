@@ -157,7 +157,10 @@ void action_on_timed_click(lv_event_t *e) {
 
 };
 
-void action_on_volumetric_click(lv_event_t *e) { controller.onTargetToggle(); };
+void action_on_volumetric_click(lv_event_t *e) {
+    controller.onTargetToggle();
+    controller.getUI()->markDirty();
+};
 
 void action_on_grind_toggle(lv_event_t *e) {
     controller.isGrindActive() ? controller.deactivateGrind() : controller.activateGrind();

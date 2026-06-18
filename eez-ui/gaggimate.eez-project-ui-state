@@ -1,6 +1,6 @@
 {
   "navigation": {
-    "selectedUserPageObject": "[gaggimate.eez-project]:/userPages/6",
+    "selectedUserPageObject": "[gaggimate.eez-project]:/userPages/7",
     "selectedUserWidgetObject": "[gaggimate.eez-project]:/userWidgets/0",
     "selectedActionObject": "[gaggimate.eez-project]:/actions/35",
     "selectedGlobalVariableObject": "[gaggimate.eez-project]:/variables/globalVariables/3",
@@ -215,10 +215,10 @@
                 {
                   "type": "tab",
                   "id": "#07a87284-0adf-47ce-9994-8cc743141d5f",
-                  "name": "ProfileScreen",
+                  "name": "GrindScreen",
                   "component": "editor",
                   "config": {
-                    "objectPath": "[gaggimate.eez-project]:/userPages/6",
+                    "objectPath": "[gaggimate.eez-project]:/userPages/7",
                     "permanent": false
                   },
                   "icon": "svg:page"
@@ -2205,7 +2205,7 @@
   "logsPanelFilter": "all",
   "selectedStylePropertyName": "",
   "lvglPart": "MAIN",
-  "lvglState": "DEFAULT",
+  "lvglState": "CHECKED",
   "lvglExpandedPropertiesGroup": [
     "POSITION AND SIZE",
     "IMAGE",
