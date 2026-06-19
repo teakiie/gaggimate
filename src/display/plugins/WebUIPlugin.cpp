@@ -697,6 +697,8 @@ void WebUIPlugin::handleSettings(AsyncWebServerRequest *request) const {
                 settings->setIntegralGain(request->arg("integralGain").toFloat());
             if (request->hasArg("maxPumpPower"))
                 settings->setMaxPumpPower(request->arg("maxPumpPower").toFloat());
+            if (request->hasArg("savedScale"))
+                settings->setSavedScale(request->arg("savedScale"));
             settings->setAutoWakeupEnabled(request->hasArg("autowakeupEnabled"));
             if (request->hasArg("autowakeupSchedules")) {
                 // Handle schedule format with days
@@ -802,6 +804,7 @@ void WebUIPlugin::handleSettings(AsyncWebServerRequest *request) const {
     doc["convergenceGain"] = settings.getConvergenceGain();
     doc["integralGain"] = settings.getIntegralGain();
     doc["maxPumpPower"] = settings.getMaxPumpPower();
+    doc["savedScale"] = settings.getSavedScale();
 
     // Add schedule format with days
     std::vector<AutoWakeupSchedule> autowakeupSchedules = settings.getAutoWakeupSchedules();
