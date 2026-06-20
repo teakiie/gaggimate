@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'        # any semver tag (e.g. v1.7.0) triggers a build + release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # needed to create the GitHub Release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true       # auto_firmware_version.py runs `git describe --tags`
+          fetch-depth: 0         # full history so the tag is reachable
+
+      - name: Cache PlatformIO & pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22       # matches .nvmrc (lts/jod)
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # GM-106: the web UI is embedded INTO the display firmware, so this must
+      # run before the display build.
+      - name: Build web UI
+        run: ./scripts/build_webui.sh
+
+      - name: Build controller firmware
+        run: |
+          mkdir -p out
+          pio run -e controller
+          cp .pio/build/controller/firmware.bin   out/board-firmware.bin
+          cp .pio/build/controller/bootloader.bin out/board-bootloader.bin
+          cp .pio/build/controller/partitions.bin out/board-partitions.bin
+
+      - name: Build display filesystem (fresh-install only)
+        run: |
+          pio run -t buildfs -e display
+          cp .pio/build/display/littlefs.bin out/display-filesystem.bin
+
+      - name: Build display firmware
+        run: |
+          pio run -e display
+          cp .pio/build/display/firmware.bin   out/display-firmware.bin
+          cp .pio/build/display/bootloader.bin out/display-bootloader.bin
+          cp .pio/build/display/partitions.bin out/display-partitions.bin
+
+      # OTA pulls display-firmware.bin + board-firmware.bin by exact name.
+      # The bootloader/partitions/filesystem .bins are for USB recovery only.
+      - name: Publish release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "out/*.bin"
+          generateReleaseNotes: true
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
