@@ -65,8 +65,6 @@ nothing else:
 | 3 | **Deleted** inherited upstream tag-build workflow | `.github/workflows/build.yml` |
 | 4 | **Deleted** inherited upstream nightly workflow | `.github/workflows/build-nightly.yml` |
 
-Plus, **on branch `dev` only** (commit `19a857d`, not yet on `master`):
-
 | 5 | **Added** upstream release watcher | `.github/workflows/upstream-watch.yml` |
 
 There are **no modifications to firmware behaviour yet**. The fork so far is pure
@@ -267,12 +265,12 @@ flashing upstream over USB.
    offering it. Click **Update Display**, then **Update Controller**. Nothing
    about this release has been exercised on hardware yet — if it misbehaves, USB
    recovery assets are attached to the release (§10).
-2. **`upstream-watch.yml` is stranded on `dev`.** GitHub fires `schedule:`
-   triggers **only from the default branch**, so the daily watcher never runs
-   today. Merging `dev` into `master` activates it.
-3. **Issues are disabled on this repo** — and `upstream-watch.yml` works by
-   *opening an issue*. Enable Issues in repo Settings, or that workflow fails on
-   every run once it reaches `master`. (Repo-settings change — ask the owner.)
+2. **Enable Issues in repo Settings** to get the upstream watcher's full
+   behaviour. It runs daily on `master` now and always writes its findings to the
+   Actions **job summary**; the tracking issue is the part that needs Issues
+   switched on. With them off the run still passes, it just leaves a warning
+   annotation — so this is a nicety, not a breakage. (Repo-settings change — the
+   owner has to do it.)
 4. **The `nightly` OTA channel is dead on this fork.** `build-nightly.yml` was
    deleted (§3), so nothing publishes a `nightly` tag or the `version.txt` asset
    the nightly path needs. Keep the machine's channel on `latest`; wanting
@@ -320,7 +318,7 @@ are for flashing a blank chip over USB — OTA never touches them.
 | `check.yml` | master, dev | every push & PR | PlatformIO static analysis (display + controller) |
 | `ota-testbench.yml` | master, dev | every push & PR, or called by another workflow | Upstream's native OTA test bench (arrived with `v1.10.0`) |
 | `pr-flash.yml` | master, dev | PRs by the repo owner | Publishes a flashable PR preview to gh-pages |
-| `upstream-watch.yml` | **dev only** | daily 06:00 UTC + manual | Opens a tracking issue when upstream publishes a release. **Inactive** — see §9.2 and §9.3 |
+| `upstream-watch.yml` | master, dev | daily 06:00 UTC + manual | Reports when upstream publishes a release this fork has not merged. Compares upstream's latest against our own tag (§5), so it stays quiet while we are current. Writes to the job summary, and opens a tracking issue when Issues are enabled (§9.2) |
 
 Deleted from this fork on purpose: `build.yml`, `build-nightly.yml` — upstream's
 own release machinery, which would publish under upstream's conventions.

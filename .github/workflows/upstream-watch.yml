@@ -1,9 +1,17 @@
 name: Upstream watch
 
-# Checks jniebuhr/gaggimate for a new release and opens a tracking issue in this
-# fork when one appears. It does NOT merge automatically — merging brings your
-# RELEASE_URL/workflow patches into conflict, which needs a human. The issue is
-# the "go merge upstream" reminder with the exact steps.
+# Tells us when jniebuhr/gaggimate publishes a release this fork has not merged
+# yet. It never merges anything: a merge drags the fork patches into conflict and
+# needs a human (FORK.md section 7). The report is the "go merge upstream"
+# reminder, with the exact steps.
+#
+# "Have we merged it?" is derived from this fork's own latest tag using the
+# versioning convention in FORK.md section 5 -- a fork version is upstream's with
+# a leading 1 on the major, so v11.10.0 means upstream v1.10.0 is in. Without that
+# check the watcher would file a reminder for a release we already shipped.
+#
+# Output goes to the job summary always, and to a tracking issue when Issues are
+# enabled on the repo. Issues being disabled is not a failure.
 
 on:
   schedule:
@@ -21,61 +29,115 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       UPSTREAM: jniebuhr/gaggimate
     steps:
-      - name: Open an issue if upstream has a newer release
+      - name: Checkout (needs tags to know this fork's version)
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
+      - name: Report if upstream has a release we have not merged
         run: |
           set -euo pipefail
 
           TAG=$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)
           if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            echo "No upstream release found — nothing to do."
+            echo "No upstream release found - nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "Latest upstream release: $TAG"
 
+          # Newest fork tag, and the upstream version it implies
+          # (strip the leading 1 off the major: v11.10.0 -> v1.10.0).
+          FORK_TAG=$(git tag --list 'v1[0-9]*.*.*' --sort=-v:refname | head -n1)
+          MERGED=""
+          if [ -n "$FORK_TAG" ]; then
+            MERGED=$(printf '%s' "$FORK_TAG" | sed -E 's/^v1([0-9]+)\./v\1./')
+          fi
+
+          {
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Upstream latest | \`$TAG\` |"
+            echo "| This fork | \`${FORK_TAG:-none}\` |"
+            echo "| Implies upstream merged | \`${MERGED:-unknown}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "upstream=$TAG fork=${FORK_TAG:-none} merged=${MERGED:-unknown}"
+
+          # Report only when upstream is genuinely ahead. Equal means we shipped it;
+          # "older" can happen for a moment if upstream re-points latest, and is
+          # not something to nag about.
+          NEWER=$(printf '%s\n%s\n' "${MERGED:-v0.0.0}" "$TAG" | sort -V | tail -n1)
+          if [ "$TAG" = "$MERGED" ] || [ "$NEWER" != "$TAG" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing to do - this fork is not behind upstream." >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing to do - this fork is not behind upstream."
+            exit 0
+          fi
+
+          # Fork version to cut once the merge lands: upstream vX.Y.Z -> v1X.Y.Z
+          NEXT=$(printf '%s' "$TAG" | sed -E 's/^v([0-9]+)\./v1\1./')
+          REL_URL="https://github.com/$UPSTREAM/releases/tag/$TAG"
           TITLE="Upstream release $TAG"
+          NOTES=$(gh api "repos/$UPSTREAM/releases/latest" -q .body || true)
 
-          # Make sure the label exists (idempotent).
+          BODY=$(cat <<EOF
+          Upstream **$UPSTREAM** published **[$TAG]($REL_URL)**, and this fork is
+          still on \`${FORK_TAG:-none}\` (upstream \`${MERGED:-unknown}\`).
+
+          Merge it, keeping the fork patches in
+          [FORK.md](https://github.com/$GITHUB_REPOSITORY/blob/master/FORK.md)
+          section 3 -- the \`RELEASE_URL\` line, \`release.yml\`, and the two
+          deleted upstream build workflows. Expect the same three conflicts every
+          time; section 7 has the recipe.
+
+          \`\`\`bash
+          git fetch upstream --tags
+          git checkout -b merge/upstream-$TAG master
+          git merge $TAG
+          # keep OUR RELEASE_URL (marked FORK PATCH), take theirs for the rest
+          # git rm .github/workflows/build.yml .github/workflows/build-nightly.yml
+          pio run -e display && pio run -e controller
+          git checkout master && git merge --no-ff merge/upstream-$TAG
+          git tag $NEXT && git push origin master --tags
+          \`\`\`
+
+          Then re-read FORK.md section 4: upstream moves the OTA code around, and
+          now and then changes the mechanism itself. Update FORK.md to match.
+
+          <details><summary>Upstream release notes</summary>
+
+          $NOTES
+
+          </details>
+          EOF
+          )
+
+          {
+            echo ""
+            echo "## $TITLE"
+            echo ""
+            echo "$BODY"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Open a tracking issue too, if Issues are enabled here. If they are not,
+          # the job summary above is the whole report, and that is not a failure.
+          if ! gh api "repos/$GITHUB_REPOSITORY" -q .has_issues | grep -qx true; then
+            echo "::warning::Issues are disabled on this repo, so no tracking issue was opened. Enable Issues in Settings to get one."
+            exit 0
+          fi
+
           gh label create upstream-release \
             --color FBCA04 \
             --description "New upstream release available to merge" \
             --force >/dev/null 2>&1 || true
 
-          # Already tracked? Match an existing issue title exactly.
           EXISTS=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all \
             --label upstream-release --limit 200 --json title \
             -q ".[] | select(.title==\"$TITLE\") | .title" || true)
           if [ -n "$EXISTS" ]; then
-            echo "Issue already exists for $TAG — nothing to do."
+            echo "Issue already exists for $TAG - nothing to open."
             exit 0
           fi
-
-          REL_URL="https://github.com/$UPSTREAM/releases/tag/$TAG"
-          NOTES=$(gh api "repos/$UPSTREAM/releases/latest" -q .body || true)
-
-          BODY=$(cat <<EOF
-          Upstream **[$UPSTREAM]** published a new release: **[$TAG]($REL_URL)**.
-
-          Merge it into this fork to pick up the changes, keeping your patches
-          (\`RELEASE_URL\` → your fork, \`release.yml\`, removed build workflows).
-
-          \`\`\`bash
-          git fetch upstream --tags
-          git checkout dev
-          git merge $TAG          # resolve conflicts — keep YOUR WebUIPlugin.h + workflows
-          git push origin dev
-          # test, then ship:
-          git checkout master && git merge dev
-          git tag <next version higher than current>   # e.g. above v11.8.1
-          git push origin master --tags
-          \`\`\`
-
-          ---
-          <details><summary>Upstream release notes</summary>
-
-          $NOTES
-          </details>
-          EOF
-          )
 
           gh issue create --repo "$GITHUB_REPOSITORY" \
             --title "$TITLE" \
