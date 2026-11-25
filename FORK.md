@@ -34,16 +34,21 @@ toggle.
 |---|---|
 | Fork default branch | `master` |
 | Upstream default branch | `master` |
-| Last shipped fork release | **`v11.8.1`** (2026-06-20), built from upstream `v1.8.1-121-g...` |
+| Last shipped fork release | **`v11.10.0`** (2026-11-25) — green build, all assets published, GitHub `latest` points at it |
 | Upstream merged in | **`v1.10.0`** — upstream's latest (2026-11-18) |
-| Next release to cut | **`v11.10.0`** — the merge is on `master`, the tag is the remaining step |
-| How far behind upstream | up to date as of that merge |
+| Previous fork release | `v11.8.1` (2026-06-20), built from upstream `v1.8.1-121-g...` |
+| How far behind upstream | up to date as of 2026-11-25 |
 | Functional code changes vs. upstream | **none** — see §3 |
 | Issues on this repo | **disabled** (this matters — see §9) |
 
-The OTA pipeline is **proven end-to-end**: tag `v11.8.1` → `Release` workflow
-succeeded → GitHub Release carries `display-firmware.bin` + `board-firmware.bin`
-(plus USB-recovery assets) → the machine can pull it.
+The OTA pipeline is **proven end-to-end**, twice: push a `v*` tag → `Release`
+workflow builds → the GitHub Release carries `display-firmware.bin` +
+`board-firmware.bin` (plus USB-recovery assets) → the machine can pull it.
+
+What is **not** verified is the device side of `v11.10.0`: nobody has clicked
+Update yet, so this firmware has never run on hardware. The controller firmware
+changed too (upstream touched controller code), so **Update Controller** is needed
+as well as **Update Display**.
 
 ---
 
@@ -258,8 +263,10 @@ flashing upstream over USB.
 
 ## 9. Open items / next actions
 
-1. **Ship `v11.10.0`.** Upstream `v1.10.0` is merged into `master`; pushing the
-   tag (§6) is the remaining step. Until then the machine stays on `v11.8.1`.
+1. **Flash `v11.10.0` on the machine.** It is published and the device should be
+   offering it. Click **Update Display**, then **Update Controller**. Nothing
+   about this release has been exercised on hardware yet — if it misbehaves, USB
+   recovery assets are attached to the release (§10).
 2. **`upstream-watch.yml` is stranded on `dev`.** GitHub fires `schedule:`
    triggers **only from the default branch**, so the daily watcher never runs
    today. Merging `dev` into `master` activates it.
