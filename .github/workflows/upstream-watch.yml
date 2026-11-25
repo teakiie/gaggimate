@@ -1,0 +1,85 @@
+name: Upstream watch
+
+# Checks jniebuhr/gaggimate for a new release and opens a tracking issue in this
+# fork when one appears. It does NOT merge automatically — merging brings your
+# RELEASE_URL/workflow patches into conflict, which needs a human. The issue is
+# the "go merge upstream" reminder with the exact steps.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # daily 06:00 UTC
+  workflow_dispatch:        # allow manual runs from the Actions tab
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      UPSTREAM: jniebuhr/gaggimate
+    steps:
+      - name: Open an issue if upstream has a newer release
+        run: |
+          set -euo pipefail
+
+          TAG=$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "No upstream release found — nothing to do."
+            exit 0
+          fi
+          echo "Latest upstream release: $TAG"
+
+          TITLE="Upstream release $TAG"
+
+          # Make sure the label exists (idempotent).
+          gh label create upstream-release \
+            --color FBCA04 \
+            --description "New upstream release available to merge" \
+            --force >/dev/null 2>&1 || true
+
+          # Already tracked? Match an existing issue title exactly.
+          EXISTS=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all \
+            --label upstream-release --limit 200 --json title \
+            -q ".[] | select(.title==\"$TITLE\") | .title" || true)
+          if [ -n "$EXISTS" ]; then
+            echo "Issue already exists for $TAG — nothing to do."
+            exit 0
+          fi
+
+          REL_URL="https://github.com/$UPSTREAM/releases/tag/$TAG"
+          NOTES=$(gh api "repos/$UPSTREAM/releases/latest" -q .body || true)
+
+          BODY=$(cat <<EOF
+          Upstream **[$UPSTREAM]** published a new release: **[$TAG]($REL_URL)**.
+
+          Merge it into this fork to pick up the changes, keeping your patches
+          (\`RELEASE_URL\` → your fork, \`release.yml\`, removed build workflows).
+
+          \`\`\`bash
+          git fetch upstream --tags
+          git checkout dev
+          git merge $TAG          # resolve conflicts — keep YOUR WebUIPlugin.h + workflows
+          git push origin dev
+          # test, then ship:
+          git checkout master && git merge dev
+          git tag <next version higher than current>   # e.g. above v11.8.1
+          git push origin master --tags
+          \`\`\`
+
+          ---
+          <details><summary>Upstream release notes</summary>
+
+          $NOTES
+          </details>
+          EOF
+          )
+
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --label upstream-release \
+            --body "$BODY"
+
+          echo "Opened tracking issue for $TAG."
