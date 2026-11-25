@@ -1,3 +1,13 @@
+> ### This is a personal fork
+>
+> `teakiie/gaggimate` is a fork of [`jniebuhr/gaggimate`](https://github.com/jniebuhr/gaggimate)
+> that builds and ships the owner's own firmware over-the-air to his own machine.
+> Everything below this box is upstream's README and describes the upstream project.
+>
+> **Working on this repo? Start with [`FORK.md`](FORK.md)** -- current state, the
+> exact fork delta, how OTA picks up a release, the versioning rule, how to ship,
+> how to merge upstream, and the open items.
+
 <p align="center">
 <img src="docs/assets/logo.png" alt="Logo" width="250px" />
 <br />
