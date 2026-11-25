@@ -18,13 +18,16 @@ project, not this pipeline.
    `teakiie/gaggimate`. If an upstream merge reverts it, the machine starts
    pulling upstream's firmware instead of this fork's.
 2. Release assets **must** be named `display-firmware.bin` and
-   `board-firmware.bin`. The firmware fetches those exact names.
+   `board-firmware.bin` — the names the firmware fetches, declared as
+   `OTA_DISPLAY_*` constants in `WebUIPlugin.h` and hardcoded for the board.
 3. Tags are **`vX.Y.Z`**, major `11` (see `FORK.md` §5). No prerelease suffix, and
    never flag the GitHub Release as a prerelease — both make the device skip it.
 4. Tag only a **clean** tree. `git describe --dirty` feeds the firmware version;
    a `-dirty` suffix breaks the version comparison on the device.
 5. `./scripts/build_webui.sh` runs **before** the display build — the web UI is
    compiled into the display app image.
+6. Leave `lib/OTA/certs/ca_roots.pem` alone. Firmware TLS trusts only those roots;
+   dropping GitHub's breaks OTA downloads outright.
 
 ## Conventions
 

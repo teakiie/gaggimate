@@ -34,10 +34,10 @@ toggle.
 |---|---|
 | Fork default branch | `master` |
 | Upstream default branch | `master` |
-| Latest fork release | **`v11.8.1`** — built & published 2026-06-20, all assets present |
-| Fork point (upstream commit this fork sits on) | `d941710` = `v1.8.1-121-gd9417101` |
-| Upstream latest release | **`v1.10.0`** (2026-11-18) |
-| How far behind | ~**308** commits; upstream shipped `v1.9.0` and `v1.10.0` since the fork point |
+| Last shipped fork release | **`v11.8.1`** (2026-06-20), built from upstream `v1.8.1-121-g...` |
+| Upstream merged in | **`v1.10.0`** — upstream's latest (2026-11-18) |
+| Next release to cut | **`v11.10.0`** — the merge is on `master`, the tag is the remaining step |
+| How far behind upstream | up to date as of that merge |
 | Functional code changes vs. upstream | **none** — see §3 |
 | Issues on this repo | **disabled** (this matters — see §9) |
 
@@ -55,7 +55,7 @@ nothing else:
 
 | # | Change | File |
 |---|---|---|
-| 1 | `RELEASE_URL` repointed to this fork | `src/display/plugins/WebUIPlugin.h:20` |
+| 1 | `RELEASE_URL` repointed to this fork, marked `FORK PATCH` in the source | `src/display/plugins/WebUIPlugin.h:22` |
 | 2 | **Added** the release pipeline | `.github/workflows/release.yml` |
 | 3 | **Deleted** inherited upstream tag-build workflow | `.github/workflows/build.yml` |
 | 4 | **Deleted** inherited upstream nightly workflow | `.github/workflows/build-nightly.yml` |
@@ -92,41 +92,61 @@ before relying on them — they move as upstream refactors.
 ### The endpoint is compile-time, not a setting
 
 ```cpp
-// src/display/plugins/WebUIPlugin.h:20
+// src/display/plugins/WebUIPlugin.h:22
 const String RELEASE_URL = "https://github.com/teakiie/gaggimate/releases/";
 ```
 
 The web UI only lets you choose a **channel**, never a repository:
-`latest` (stable) or `nightly` → `WebUIPlugin.cpp:63` and `:494`.
+`latest` (stable) or `nightly` → `WebUIPlugin.cpp:47` and `:301`.
 
 ### Update resolution (`lib/OTA/src/GitHubOTA.cpp`, `lib/OTA/src/common.cpp`)
 
 - Stable: requests `<RELEASE_URL>latest`; GitHub 302-redirects to
   `/releases/tag/vX.Y.Z`; the firmware parses the version **out of the tag**,
   rewrites `tag` → `download`, and fetches assets from there.
-- **Asset names are hardcoded** (`WebUIPlugin.cpp:72`): `display-firmware.bin`,
-  `display-filesystem.bin`, `board-firmware.bin`.
-  **Renaming a release asset breaks OTA silently.**
-- The **filesystem image is NOT flashed over OTA** (`GitHubOTA.cpp:113-115`) — the
-  web UI lives in the app image, so user data (profiles, shot history) survives
+- **Asset names are hardcoded.** Since upstream `v1.10.0` they are constants in
+  `WebUIPlugin.h:24-31`, handed to the OTA client at `WebUIPlugin.cpp:56`:
+  `display-firmware.bin`, `display-filesystem.bin`, `board-firmware.bin` — plus
+  `display-headless-firmware.bin` / `display-headless-filesystem.bin` under
+  `GAGGIMATE_HEADLESS`. **Renaming a release asset breaks OTA silently.**
+- The **filesystem image is NOT flashed over OTA** (`GitHubOTA.cpp:127`) — the web
+  UI lives in the app image, so user data (profiles, shot history) survives
   updates. `display-filesystem.bin` exists for **fresh USB installs only**.
-- Version comparison is strict semver, `new > current` (`common.cpp:101`).
+- Version comparison is strict semver, `new > current` (`common.cpp:86`).
 - The `nightly` channel additionally needs a `version.txt` asset
-  (`common.cpp:61`); stable does not.
+  (`common.cpp:60`); stable does not.
+- Since `v1.10.0` the client **refuses a non-HTTPS release URL** and will not
+  follow a downgraded redirect (`GitHubOTA.cpp`, `update()`).
+- Since `v1.10.0` firmware TLS trusts **only a reviewed root list**
+  (`lib/OTA/certs/ca_roots.pem`, baked into the image by
+  `scripts/ca_bundle_pre.py`, upstream GM-296). That list covers `github.com` and
+  GitHub release assets, so this fork works unchanged — but do not prune it.
 
 ### Device behaviour
 
-The display **auto-checks** on a timer (`WebUIPlugin.cpp:126`) and surfaces
-"update available", but only **flashes when the user clicks** "Update Display" /
-"Update Controller" (`WebUIPlugin.cpp:114`). That manual click is deliberate —
+The display **auto-checks** on a timer (`WebUIPlugin.cpp:99` — every 30 minutes,
+and only while the machine is idle) and surfaces "update available", but only
+**flashes when the user clicks** "Update Display" / "Update Controller"
+(`WebUIPlugin.cpp:308`). That manual click is deliberate —
 nobody wants a reflash mid-shot. Do not "fix" it into an auto-flash.
 
 ### Version stamping
 
 `scripts/auto_firmware_version.py` runs
-`git describe --tags --dirty --exclude nightly --exclude db` and writes
-`src/version.h`. **The git tag *is* the firmware version.** Build from a clean,
+`git describe --tags --dirty --match "v*"` and writes `src/version.h`. **The git tag *is* the firmware version.** Build from a clean,
 tagged commit — a dirty tree appends `-dirty` and poisons the comparator.
+
+### Upstream release signing does **not** apply here
+
+Upstream `v1.10.0` added `scripts/sign_release.py`, a `RELEASE_SIGNING_KEY` secret
+and an `environment: release-signing` gate on its `build.yml`. Those sign
+`manifest.json` / `manifest.sig` for **upstream's own update server**
+(`scripts/upload_release.sh`). The GitHub-release OTA path this fork uses does
+**no signature verification** — there is no manifest or signature code anywhere in
+`lib/OTA/src/` — so unsigned releases from `release.yml` are accepted as they are.
+
+Re-check this after every upstream merge. If upstream ever teaches `GitHubOTA` to
+verify a manifest, this fork has to sign its releases too or OTA stops working.
 
 ---
 
@@ -190,20 +210,35 @@ version tag (that tag **is** the ship signal) · clicking Update on the machine.
 
 ## 7. Merge upstream
 
+Using upstream `v1.11.0` as the example — substitute whatever upstream's latest
+release tag is:
+
 ```bash
 git fetch upstream --tags
-git checkout -b merge/v1.10.0 master
-git merge v1.10.0                 # upstream's tag, not a branch
-# conflicts: keep OURS for the RELEASE_URL line + .github/workflows/*
-#            keep THEIRS for everything else
-#            if upstream re-adds build.yml / build-nightly.yml, delete them again
-pio run -e display && pio run -e controller   # must compile before you tag
-git checkout master && git merge --no-ff merge/v1.10.0
-git tag v11.10.0 && git push origin master --tags
+git checkout -b merge/upstream-v1.11.0 master
+git merge v1.11.0                 # upstream's tag, not a branch
+# Expect exactly three conflicts, every time:
+#   src/display/plugins/WebUIPlugin.h  -> keep OUR RELEASE_URL line (it is marked
+#                                         FORK PATCH), take THEIRS for the rest of
+#                                         the hunk, including any new OTA_DISPLAY_*
+#                                         constants
+#   .github/workflows/build.yml        -> stay deleted (git rm)
+#   .github/workflows/build-nightly.yml-> stay deleted (git rm)
+# Everything else: take theirs.
+pio run -e display && pio run -e controller   # compile before you tag
+git checkout master && git merge --no-ff merge/upstream-v1.11.0
+git tag v11.11.0 && git push origin master --tags
 ```
 
-After every merge, re-verify §3: `git diff <new upstream base>..master` should
-still show exactly the fork delta and nothing accidental.
+After every merge:
+
+- `git diff v1.11.0..HEAD` should show **exactly** the §3 delta plus this
+  documentation — nothing else. Update §3 if it does not.
+- Re-read §4: upstream refactors the OTA code, so the cited lines drift and
+  occasionally the mechanism itself changes (`v1.10.0` moved the asset names into
+  constants and pinned the TLS roots).
+- Check whether `.nvmrc` moved. `release.yml` reads it via `node-version-file`,
+  so this is normally automatic.
 
 ---
 
@@ -223,12 +258,11 @@ flashing upstream over USB.
 
 ## 9. Open items / next actions
 
-1. **Merge upstream `v1.10.0`** (§7) and ship `v11.10.0`. The fork is ~5 months
-   and two upstream releases behind; the longer it waits, the uglier the
-   conflicts.
-2. **`upstream-watch.yml` is stranded on `dev`.** GitHub runs `schedule:`
-   triggers **only from the default branch**, so the daily watcher never fires
-   today. Merging `dev` → `master` activates it.
+1. **Ship `v11.10.0`.** Upstream `v1.10.0` is merged into `master`; pushing the
+   tag (§6) is the remaining step. Until then the machine stays on `v11.8.1`.
+2. **`upstream-watch.yml` is stranded on `dev`.** GitHub fires `schedule:`
+   triggers **only from the default branch**, so the daily watcher never runs
+   today. Merging `dev` into `master` activates it.
 3. **Issues are disabled on this repo** — and `upstream-watch.yml` works by
    *opening an issue*. Enable Issues in repo Settings, or that workflow fails on
    every run once it reaches `master`. (Repo-settings change — ask the owner.)
@@ -236,12 +270,18 @@ flashing upstream over USB.
    deleted (§3), so nothing publishes a `nightly` tag or the `version.txt` asset
    the nightly path needs. Keep the machine's channel on `latest`; wanting
    nightly means writing a nightly workflow first.
-5. **Optional, not started:** a PR-check workflow beyond `check.yml`'s static
-   analysis (compile both envs + run native tests on PRs).
-6. **No feature work has happened yet.** The original motivation — "run my own
+5. **`release.yml` builds the screen variant only.** Upstream also ships
+   `display-headless-*` assets. Irrelevant while the machine has a display, but
+   it would have to be added before flashing a headless board from this fork.
+6. **Nothing compiles the firmware before a tag is pushed.** `check.yml` is static
+   analysis only, so a broken merge is first caught by the release run. That run
+   publishes nothing when a build fails — the release step is last, so the machine
+   is never endangered — but the fix is to re-tag. Adding a build job to
+   `check.yml`, or a `workflow_dispatch` build, would close this gap.
+7. **Upstream's `ota-testbench.yml` now runs on every push and PR**; it arrived
+   with `v1.10.0`. It is upstream's native OTA test bench, inherited as-is.
+8. **No feature work has happened yet.** The original motivation — "run my own
    modified firmware" — is still unexercised. The pipeline is ready for it.
-
----
 
 ## 10. Local build
 
@@ -271,6 +311,7 @@ are for flashing a blank chip over USB — OTA never touches them.
 |---|---|---|---|
 | `release.yml` | master, dev | push tag `v*` | Builds everything, publishes the GitHub Release. **The OTA source.** |
 | `check.yml` | master, dev | every push & PR | PlatformIO static analysis (display + controller) |
+| `ota-testbench.yml` | master, dev | every push & PR, or called by another workflow | Upstream's native OTA test bench (arrived with `v1.10.0`) |
 | `pr-flash.yml` | master, dev | PRs by the repo owner | Publishes a flashable PR preview to gh-pages |
 | `upstream-watch.yml` | **dev only** | daily 06:00 UTC + manual | Opens a tracking issue when upstream publishes a release. **Inactive** — see §9.2 and §9.3 |
 
