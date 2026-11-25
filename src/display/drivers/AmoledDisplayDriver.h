@@ -6,10 +6,15 @@
 class AmoledDisplayDriver : public Driver {
   public:
     bool isCompatible() override;
+    // Detected hw variant index for NVS caching; selectVariant restores it without probing
+    int getVariant() const { return variant; }
+    bool selectVariant(int variant);
     void init() override;
     void setBrightness(int brightness) override { panel->setBrightness(brightness); };
     bool supportsSDCard() override;
     bool installSDCard() override;
+    bool supportsUART() override { return true; }
+    UartConf getUARTConf() override { return {UART_TX_PIN, UART_RX_PIN}; }
 
     static AmoledDisplayDriver *getInstance() {
         if (instance == nullptr) {
@@ -25,6 +30,10 @@ class AmoledDisplayDriver : public Driver {
     Amoled_DisplayPanel *panel = nullptr;
 
     AmoledHwConfig hwConfig{};
+    int variant = -1;
+
+    static constexpr uint8_t UART_TX_PIN = 43;
+    static constexpr uint8_t UART_RX_PIN = 44;
 
     AmoledDisplayDriver() {};
 };

@@ -4,13 +4,15 @@
 #include <cstddef>
 #include <cstdint>
 
-// COBS + CRC framing helpers for the UART transport. No Arduino/nanopb deps so
-// they're easy to test on the host. Frame layout is:
-//
-//     COBS( datagram || crc16 ) || 0x00
-//
-// COBS guarantees a zero-free body, so the 0x00 acts as the frame delimiter.
+// Host-testable COBS + CRC framing for the UART transport: COBS(channel || datagram || crc16) || 0x00 (COBS body is
+// zero-free). A keepalive is COBS(flags || crc16), no channel byte.
 namespace gm_uart {
+
+// Line rate both ends open the port at; a ~1 KB OTA chunk takes ~22 ms on the wire.
+constexpr uint32_t DEFAULT_BAUD = 460800;
+// HardwareSerial buffers; RX has to absorb whatever arrives while the pump task is busy.
+constexpr size_t RX_BUFFER_SIZE = 4096;
+constexpr size_t TX_BUFFER_SIZE = 2048;
 
 // CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection, no final xor).
 inline uint16_t crc16(const uint8_t *data, size_t length) {
@@ -26,8 +28,7 @@ inline uint16_t crc16(const uint8_t *data, size_t length) {
 // Worst-case encoded length, delimiter not included.
 inline constexpr size_t cobsMaxEncodedLen(size_t length) { return length + length / 254 + 1; }
 
-// Encode into `out` (>= cobsMaxEncodedLen(length) bytes), return bytes written.
-// Caller appends the 0x00 delimiter.
+// Encode into `out` (>= cobsMaxEncodedLen(length) bytes), return bytes written; caller appends the 0x00 delimiter.
 inline size_t cobsEncode(const uint8_t *input, size_t length, uint8_t *out) {
     size_t readIdx = 0;
     size_t writeIdx = 1; // out[codeIdx] gets back-filled with the run length
@@ -53,8 +54,7 @@ inline size_t cobsEncode(const uint8_t *input, size_t length, uint8_t *out) {
     return writeIdx;
 }
 
-// Decode one block (between delimiters, delimiter excluded). Returns decoded
-// length, or 0 if the block is corrupt or won't fit in `out`.
+// Decode one delimiter-free block; returns decoded length, or 0 if corrupt or too big for `out`.
 inline size_t cobsDecode(const uint8_t *input, size_t length, uint8_t *out, size_t outCap) {
     size_t readIdx = 0;
     size_t writeIdx = 0;

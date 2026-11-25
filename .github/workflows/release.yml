@@ -36,7 +36,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22       # matches .nvmrc (lts/jod)
+          node-version-file: '.nvmrc'   # follow upstream's Node version across merges
           cache: npm
           cache-dependency-path: web/package-lock.json
 

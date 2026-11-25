@@ -7,6 +7,8 @@ static constexpr float M_PI = 3.14159265358979323846f;
 
 #include "SimpleKalmanFilter/SimpleKalmanFilter.h"
 #include <algorithm>
+#include <cmath> // std::fmax (getCoffeeOutputEstimate())
+#include <memory>
 
 class PressureController {
   private:
@@ -22,13 +24,15 @@ class PressureController {
     void setFlowLimit(float lim) { /* Flow limit not currently implemented */ };
     void setPressureLimit(float lim) { /* Pressure limit not currently implemented */ };
 
-    void update(ControlMode mode);
+    void update(ControlMode mode, bool freshPressure = true, float sampleTime = 0.0f, float elapsed = 0.0f);
     void tare();
     void reset();
 
     float getCoffeeOutputEstimate() { return std::fmax(0.0f, _coffeeOutput); };
     void setPumpFlowCoeff(float oneBarFlow, float nineBarFlow);
     void setPumpFlowPolyCoeffs(float a, float b, float c, float d);
+    // Rotary-vane slip polynomial (gear pump only); default zero -> no effect.
+    void setPumpSlipPolyCoeffs(float a, float b, float c, float d);
     void setGains(float commutationGain, float convergenceGain, float integralGain);
     float getPumpFlowRate() { return exportPumpFlowRate; };
     float getCoffeeFlowRate() { return *_valveStatus == 1 ? _coffeeFlowRate : 0.0f; };
@@ -39,10 +43,13 @@ class PressureController {
   private:
     float getPumpDutyCycleForPressure();
     void virtualScale();
-    void filterSensor();
+    void filterSensor(float sampleTime);
+    bool _pressureInitialized = false;
     void filterSetpoint(float rawSetpoint);
     float pumpFlowModel(float alpha = 100.0f) const;
     float getAvailableFlow() const;
+    float getSlip() const;          // Vane-pump internal leakage at current pressure (ml/s)
+    float getGeometricFlow() const; // Full geometric flow Q_geo = full-drive curve + slip
     float getPumpDutyCycleForFlowRate() const;
 
     float _dt = 1.0f; // Controller sampling period (seconds)
@@ -70,7 +77,8 @@ class PressureController {
     float _puckResistance = 1e7f;                                    // Initial estimate of puck resistance
     const float _maxPressure = 15.0f;                                // Maximum pressure (bar)
     const float _maxPressureRate = 9.0f;                             // Maximum pressure rate (bar/s)
-    float _pumpFlowCoefficients[4] = {0.0f, 0.0f, -0.5854f, 10.79f}; // Pump flow polynomial coefficients
+    float _pumpFlowCoefficients[4] = {0.0f, 0.0f, -0.5854f, 10.79f}; // Full-drive flow polynomial (Q_geo - slip)
+    float _pumpSlipCoefficients[4] = {0.0f, 0.0f, 0.0f, 0.0f};       // Vane-pump slip polynomial (gear pump only)
 
     // === Controller Gains ===
     float _commutationGain = 0.7f;     // Commutation gain
@@ -101,7 +109,7 @@ class PressureController {
     bool _puckState[3] = {};
     int _puckCounter = 0;
     float exportPumpFlowRate = 0.0f; // To disociate the exported value from the internal because of filtering (cosmetic) purpose
-    SimpleKalmanFilter *_pressureKalmanFilter;
+    std::unique_ptr<SimpleKalmanFilter> _pressureKalmanFilter;
 };
 
 #endif // PRESSURE_CONTROLLER_H

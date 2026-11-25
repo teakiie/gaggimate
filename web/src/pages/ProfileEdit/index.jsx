@@ -1,19 +1,43 @@
 import { useLocation, useRoute } from 'preact-iso';
 import { useCallback, useEffect, useState, useContext } from 'preact/hooks';
+import {
+  CategoryScale,
+  Chart,
+  Filler,
+  Legend,
+  LinearScale,
+  LineController,
+  LineElement,
+  PointElement,
+  TimeScale,
+} from 'chart.js';
 import { ProfileTypeSelection } from './ProfileTypeSelection.jsx';
 import { StandardProfileForm } from './StandardProfileForm.jsx';
 import { ApiServiceContext, machine } from '../../services/ApiService.js';
+import { useProfileList } from '../../services/hooks.js';
 import { computed } from '@preact/signals';
 import { Spinner } from '../../components/Spinner.jsx';
 import { ExtendedProfileForm } from './ExtendedProfileForm.jsx';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faFileExport } from '@fortawesome/free-solid-svg-icons/faFileExport';
+import { Trans, useLingui } from '@lingui/react/macro';
+
+Chart.register(
+  LineController,
+  TimeScale,
+  LinearScale,
+  CategoryScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Legend,
+);
 
 const connected = computed(() => machine.value.connected);
 const pressureAvailable = computed(() => machine.value.capabilities.pressure);
 
 export function ProfileEdit() {
+  const { t } = useLingui();
   const apiService = useContext(ApiServiceContext);
+  const { invalidate: invalidateProfiles } = useProfileList();
   const location = useLocation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -88,12 +112,19 @@ export function ProfileEdit() {
   const onSave = useCallback(
     async data => {
       setSaving(true);
+      console.log(data);
       const response = await apiService.request({ tp: 'req:profiles:save', profile: data });
+      if (response?.error) {
+        // Rejected by the machine: keep the form as the user left it and stay on the page
+        setSaving(false);
+        return;
+      }
       setData(response.profile);
+      await invalidateProfiles();
       setSaving(false);
       location.route('/profiles');
     },
-    [apiService, params.id, location],
+    [apiService, params.id, location, invalidateProfiles],
   );
   const onConvert = useCallback(() => {
     setData({
@@ -101,6 +132,8 @@ export function ProfileEdit() {
       type: 'pro',
     });
   }, [data, setData]);
+
+  const label = data?.label;
 
   if (loading) {
     return (
@@ -114,16 +147,16 @@ export function ProfileEdit() {
     <>
       <div className='mb-4 flex flex-row items-center gap-2'>
         <h2 className='flex-grow text-2xl font-bold sm:text-3xl'>
-          {params.id === 'new' ? 'Create Profile' : `Edit ${data.label}`}
+          {params.id === 'new' ? t`Create Profile` : t`Edit ${label}`}
         </h2>
         {data?.type === 'standard' && pressureAvailable.value && (
           <button
             onClick={() => onConvert()}
             className='btn'
-            title='Convert to Pro'
-            aria-label='Convert to Pro'
+            title={t`Convert to Pro`}
+            aria-label={t`Convert to Pro`}
           >
-            Convert to Pro
+            <Trans>Convert to Pro</Trans>
           </button>
         )}
       </div>

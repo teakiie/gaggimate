@@ -3,17 +3,11 @@
 
 #include "../Protocol.h"
 #include "../Transport.h"
+#include "BleConstants.h"
 #include <NimBLEDevice.h>
 
-/**
- * BLE central (client) transport for the display.
- *
- * Scans for the controller's service, connects, subscribes to its TX
- * characteristic (inbound datagrams) and writes to its RX characteristic
- * (outbound datagrams). Mirrors the connection/scan behaviour of the previous
- * client controller, including the low-duty passive scan tuned for Wi-Fi
- * coexistence.
- */
+// BLE central (client) transport for the display: scans, connects, subscribes TX / writes RX (one datagram per op).
+// Pairing: bonds to the first controller found, then connects only to it until clearBonds(); links encrypted before GATT use.
 class BleClientTransport : public Transport, public NimBLEAdvertisedDeviceCallbacks, public NimBLEClientCallbacks {
   public:
     BleClientTransport() = default;
@@ -25,50 +19,57 @@ class BleClientTransport : public Transport, public NimBLEAdvertisedDeviceCallba
     bool isReadyForConnection() const { return _readyForConnection; }
     void disconnect();
 
+    // Forget the paired controller so the display can pair to a different one.
+    void clearBonds();
+
+    // Off = no scanning and no new connection; used while another link carries the session.
+    void setSearchEnabled(bool enabled);
+
     bool send(const uint8_t *data, size_t length) override;
     bool isConnected() const override;
+    size_t maxDatagram() const override { return BLE_MAX_DATAGRAM; }
 
-    // Choose the connection interval: low-latency (tight, ~7.5-10ms) while a
-    // shot is running for responsive control, relaxed (~30-50ms) when idle so
-    // the shared 2.4GHz radio leaves more contiguous airtime for Wi-Fi.
+    // Tight ~7.5-10ms conn interval while a shot runs, relaxed ~30-50ms when idle to leave airtime for Wi-Fi.
     void setLowLatency(bool active);
 
-    // Native client handle, needed by ControllerOTA (OTA uses its own service).
+    // Native client handle, needed by BleOtaSender (OTA uses its own service) and the status RSSI.
     NimBLEClient *getNativeClient() const { return _client; }
 
-    // Fired when we connect to a GaggiMate controller that advertises the
-    // service but is missing the framed-comms characteristics (an old /
-    // incompatible firmware). The BLE link is intentionally kept up so the
-    // separate OTA service stays reachable. The argument is the raw value of the
-    // legacy read-only INFO characteristic (JSON), if readable.
+    // Fired on old firmware missing the comms chars; link kept for OTA, arg is the legacy INFO characteristic (JSON).
     void onIncompatible(std::function<void(const String &info)> cb) { _onIncompatible = std::move(cb); }
 
   private:
     NimBLEClient *_client = nullptr;
     NimBLEScan *_scanner = nullptr;
-    // Copy of the controller's address taken in onResult(). We must NOT keep the
-    // NimBLEAdvertisedDevice* itself: with setMaxResults(0) NimBLE deletes that
-    // object the moment onResult() returns (NimBLEScan erase()), so dereferencing
-    // it later in connectToServer() -- which runs on the main loop task -- is a
-    // use-after-free that reads whatever string now occupies the freed heap slot
-    // back as a bogus peer address. NimBLEAddress is a value type, so copying it
-    // while the device is still alive is safe and survives the deletion.
+    // Value copy taken in onResult(); with setMaxResults(0) the advertised-device object is freed there (use-after-free trap).
     NimBLEAddress _serverAddress{};
     bool _haveServerAddress = false;
+    // Paired controller identity from our own NVS; the scale-shared, evicting NimBLE bond store can't be the source of truth.
+    NimBLEAddress _pairedPeer{};
+    bool _havePairedPeer = false;
     NimBLERemoteCharacteristic *_writeChar = nullptr;  // to server (RX_CHAR_UUID)
     NimBLERemoteCharacteristic *_notifyChar = nullptr; // from server (TX_CHAR_UUID)
     bool _readyForConnection = false;
     bool _lowLatency = false;
     bool _incompatible = false;
+    volatile bool _searchEnabled = true;
     std::function<void(const String &info)> _onIncompatible = nullptr;
 
     void applyConnParams();
+    int requestConnParams(uint16_t minInterval, uint16_t maxInterval);
+    void logOtherLinks() const;
+    // True link-layer encryption state; secureConnection()'s rc lies when it loses an initiation race.
+    bool isEncrypted() const;
+    void loadPairedPeer();
+    void savePairedPeer(const NimBLEAddress &address);
+    bool isLockedToOther(NimBLEAdvertisedDevice *advertisedDevice) const;
 
     // Connection-interval units are 1.25ms; supervision timeout units are 10ms.
-    static constexpr uint16_t ACTIVE_MIN_INTERVAL = 6; // 7.5 ms
-    static constexpr uint16_t ACTIVE_MAX_INTERVAL = 8; // 10 ms
-    static constexpr uint16_t IDLE_MIN_INTERVAL = 24;  // 30 ms
-    static constexpr uint16_t IDLE_MAX_INTERVAL = 40;  // 50 ms
+    // Active rungs, tightest first; with a scale link on the same radio the controller refuses the tight ones (HCI 0x12).
+    // The controller settles on the max of an accepted range, so a fixed 15 ms rung sits before the 15-20 ms one.
+    static constexpr uint16_t ACTIVE_RUNGS[][2] = {{6, 8}, {9, 12}, {12, 12}, {12, 16}, {16, 24}}; // 7.5-10 .. 20-30 ms
+    static constexpr uint16_t IDLE_MIN_INTERVAL = 24;                                              // 30 ms
+    static constexpr uint16_t IDLE_MAX_INTERVAL = 40;                                              // 50 ms
     static constexpr uint16_t CONN_LATENCY = 0;
     static constexpr uint16_t CONN_TIMEOUT = 400; // 4 s
 

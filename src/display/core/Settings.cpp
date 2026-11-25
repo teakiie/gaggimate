@@ -1,60 +1,18 @@
 #include "Settings.h"
+#include "MachineProfiles.h"
 
 #include <algorithm>
+#include <cmath>
 #include <display/util/ColorConversion.h>
+#include <memory>
+#include <nvs.h>
 #include <utility>
 
-Settings::Settings() {
-    preferences.begin(PREFERENCES_KEY, true);
-    startupMode = preferences.getInt("sm", MODE_STANDBY);
-    targetSteamTemp = preferences.getInt("ts", 145);
-    targetWaterTemp = preferences.getInt("tw", 80);
-    targetGrindVolume = preferences.getDouble("tgv", 18.0);
-    targetGrindDuration = preferences.getInt("tgd", 25000);
-    brewDelay = preferences.getDouble("del_br", 800.0);
-    grindDelay = preferences.getDouble("del_gd", 1000.0);
-    delayAdjust = preferences.getBool("del_ad", true);
-    temperatureOffset = preferences.getInt("to", DEFAULT_TEMPERATURE_OFFSET);
-    pressureScaling = preferences.getFloat("ps", DEFAULT_PRESSURE_SCALING);
-    pid = preferences.getString("pid", DEFAULT_PID);
-    pumpModelCoeffs = preferences.getString("pmc", DEFAULT_PUMP_MODEL_COEFFS);
-    wifiSsid = preferences.getString("ws", "");
-    wifiPassword = preferences.getString("wp", "");
-    wifiApPassword = preferences.getString("wap", "");
-    mdnsName = preferences.getString("mn", DEFAULT_MDNS_NAME);
-    homekit = preferences.getBool("hk", false);
-    volumetricTarget = preferences.getBool("vt", false);
-    otaChannel = preferences.getString("oc", DEFAULT_OTA_CHANNEL);
-    savedScale = preferences.getString("ssc", "");
-    momentaryButtons = preferences.getBool("mb", false);
-    boilerFillActive = preferences.getBool("bf_a", false);
-    startupFillTime = preferences.getInt("bf_su", 5000);
-    steamFillTime = preferences.getInt("bf_st", 5000);
-    smartGrindActive = preferences.getBool("sg_a", false);
-    smartGrindIp = preferences.getString("sg_i", "");
-    smartGrindToggle = preferences.getBool("sg_t", false);
-    smartGrindMode = preferences.getInt("sg_m", smartGrindToggle ? 1 : 0);
-    homeAssistant = preferences.getBool("ha_a", false);
-    homeAssistantIP = preferences.getString("ha_i", "");
-    homeAssistantPort = preferences.getInt("ha_p", 1883);
-    homeAssistantTopic = preferences.getString("ha_t", DEFAULT_HOME_ASSISTANT_TOPIC);
-    homeAssistantUser = preferences.getString("ha_u", "");
-    homeAssistantPassword = preferences.getString("ha_pw", "");
-    standbyTimeout = preferences.getInt("sbt", DEFAULT_STANDBY_TIMEOUT_MS);
-    timezone = preferences.getString("tz", DEFAULT_TIMEZONE);
-    clock24hFormat = preferences.getBool("clk_24h", true);
-    selectedProfile = preferences.getString("sp", "");
-    startupProfile = preferences.getString("sup", ""); // Empty = last used profile
-    favoritedProfiles = explode(preferences.getString("fp", ""), ',');
-    profileOrder = explode(preferences.getString("po", ""), ',');
-    steamPumpPercentage = preferences.getFloat("spp", DEFAULT_STEAM_PUMP_PERCENTAGE);
-    steamPumpCutoff = preferences.getFloat("spc", DEFAULT_STEAM_PUMP_CUTOFF);
-    historyIndex = preferences.getInt("hi", 0);
-    autowakeupEnabled = preferences.getBool("ab_en", false);
-
-    // Load schedule format: "time1|days1;time2|days2" where days is 7-bit string (e.g., "1111100" for weekdays only)
-    String schedulesStr = preferences.getString("ab_schedules", "");
-    autowakeupSchedules.clear();
+std::vector<AutoWakeupSchedule>
+PreferencesCodec<std::vector<AutoWakeupSchedule>>::read(Preferences &prefs, const char *key,
+                                                        const std::vector<AutoWakeupSchedule> &def) {
+    String schedulesStr = prefs.getString(key, "");
+    std::vector<AutoWakeupSchedule> schedules;
 
     if (schedulesStr.length() > 0) {
         int start = 0;
@@ -77,7 +35,7 @@ Settings::Settings() {
                     }
                 }
 
-                autowakeupSchedules.push_back(schedule);
+                schedules.push_back(schedule);
             }
 
             if (end == -1)
@@ -87,262 +45,304 @@ Settings::Settings() {
         }
     }
 
-    if (autowakeupSchedules.empty()) {
-        autowakeupSchedules.emplace_back(AutoWakeupSchedule("07:00"));
+    return schedules.empty() ? def : schedules;
+}
+
+void PreferencesCodec<std::vector<AutoWakeupSchedule>>::write(Preferences &prefs, const char *key,
+                                                              const std::vector<AutoWakeupSchedule> &value) {
+    String serialized = "";
+    for (size_t i = 0; i < value.size(); i++) {
+        if (i > 0)
+            serialized += ";";
+        serialized += value[i].time + "|";
+        for (int j = 0; j < 7; j++) {
+            serialized += value[i].days[j] ? "1" : "0";
+        }
+    }
+    prefs.putString(key, serialized);
+}
+
+std::atomic<esp_err_t> MachineProfileSelectionCodec::lastError{ESP_OK};
+
+String MachineProfileSelectionCodec::read(Preferences &prefs, const char *key, const String &def) {
+    if (prefs.getType(key) != PT_BLOB)
+        return prefs.getString(key, def); // Existing firmware stored a string.
+    const size_t size = prefs.getBytesLength(key);
+    if (size == 0 || size > 3501)
+        return def;
+    std::unique_ptr<char[]> bytes(new (std::nothrow) char[size]);
+    if (!bytes || prefs.getBytes(key, bytes.get(), size) != size || bytes[size - 1] != '\0')
+        return def;
+    return String(bytes.get());
+}
+
+void MachineProfileSelectionCodec::write(Preferences &, const char *key, const String &value) {
+    // Use the NVS API here to retain the precise error; Preferences only returns a byte count.
+    nvs_handle_t handle;
+    esp_err_t error = nvs_open(PREFERENCES_KEY, NVS_READWRITE, &handle);
+    if (error == ESP_OK) {
+        error = nvs_set_blob(handle, key, value.c_str(), value.length() + 1);
+        if (error == ESP_OK)
+            error = nvs_commit(handle);
+        nvs_close(handle);
+    }
+    lastError = error;
+}
+
+String Settings::getSaveError() const {
+    const esp_err_t error = MachineProfileSelectionCodec::lastError.load();
+    return error == ESP_OK ? String("Settings storage readback failed")
+                           : String("Machine profile storage: ") + esp_err_to_name(error);
+}
+
+bool Settings::setMachineProfileSelection(const String &value) {
+    String reference;
+    if (!machineProfileReference(value, reference))
+        return false;
+    machineProfileSelection.set(reference);
+    return true;
+}
+
+Settings::Settings() {
+    preferences.begin(PREFERENCES_KEY, true);
+    for (auto *property : registry) {
+        property->load(preferences);
+    }
+    // Copy the saved brew gains once when upgrading to separate steam tuning.
+    if (steamPid.get().isEmpty()) {
+        const String brewPid = pid.get();
+        const int firstSeparator = brewPid.indexOf(',');
+        const int secondSeparator = brewPid.indexOf(',', firstSeparator + 1);
+        const int feedforwardSeparator = brewPid.indexOf(',', secondSeparator + 1);
+        steamPid.set(feedforwardSeparator >= 0 ? brewPid.substring(0, feedforwardSeparator) : brewPid);
+    }
+    // Migrate an older full snapshot without reapplying any machine values.
+    if (!setMachineProfileSelection(machineProfileSelection.get()))
+        ESP_LOGW("MachineProfile", "Could not convert saved profile reference; keeping the existing selection");
+
+    // Persist the initial copy, so later Cup scale edits remain independent.
+    if (!preferences.isKey("sd_pf_scale")) {
+        portafilterScale.initDefault("");
+        portafilterScale.set(smartDoseScale.get());
     }
 
-    // Display settings
-    mainBrightness = preferences.getInt("main_b", 16);
-    standbyBrightness = preferences.getInt("standby_b", 8);
-    standbyBrightnessTimeout = preferences.getInt("standby_bt", 60000);
-    wifiApTimeout = preferences.getInt("wifi_apt", DEFAULT_WIFI_AP_TIMEOUT_MS);
-    themeMode = preferences.getInt("theme", 0);
-
-    // Sunrise settings
+    if (preferences.isKey("pss") && preferences.getType("pss") == PT_U8) {
+        preferredScaleSource.initDefault("");
+        preferredScaleSource.set("auto");
+        if (!preferences.isKey("sst"))
+            persistentSteamState.set(preferences.getBool("pss", false));
+    }
+    if (!preferences.isKey("steam_mode")) {
+        const bool independent = preferences.getBool("steam_ind", false);
+        const bool remember = preferences.getBool("rss", false);
+        defaultSteamMode.set(independent ? (remember ? 2 : 0) : 1);
+        defaultSteamMode.persist();
+    }
+    // Legacy migrations: derive defaults for keys that were never persisted
+    if (!preferences.isKey("sg_m")) {
+        smartGrindMode.initDefault(smartGrindToggle.get() ? 1 : 0);
+    }
     sunriseR = preferences.getInt("sr_r", 0);
     sunriseG = preferences.getInt("sr_g", 250);
     sunriseB = preferences.getInt("sr_b", 150);
     sunriseW = preferences.getInt("sr_w", 255);
-    String sunriseIdleDefault = ColorConversion::toHex(sunriseR, sunriseG, sunriseB, sunriseW);
-    sunriseIdle = preferences.getString("sr_i", sunriseIdleDefault);
-    sunriseActive = preferences.getString("sr_a", "#0000FF");
-    sunriseFinished = preferences.getString("sr_f", "#00FF00");
-    sunriseError = preferences.getString("sr_e", "#FF0000");
-    sunriseExtBrightness = preferences.getInt("sr_exb", 75);
-    emptyTankDistance = preferences.getInt("sr_ed", 210);
-    fullTankDistance = preferences.getInt("sr_fd", 30);
-    altRelayFunction = preferences.getInt("alt_relay", ALT_RELAY_GRIND);
-
-    commutationGain = preferences.getFloat("p_cm", DEFAULT_COMMUTATION_GAIN);
-    convergenceGain = preferences.getFloat("p_cv", DEFAULT_CONVERGENCE_GAIN);
-    integralGain = preferences.getFloat("p_ig", DEFAULT_INTEGRAL_GAIN);
-    maxPumpPower = preferences.getFloat("p_mp", 1.0);
-
-    String buttonBehaviorStr = preferences.getString("btnb", "brew,steam,water");
-    buttonBehavior = explode(buttonBehaviorStr, ',');
-
+    if (!preferences.isKey("sr_i")) {
+        sunriseIdle.initDefault(ColorConversion::toHex(sunriseR, sunriseG, sunriseB, sunriseW));
+    }
+    // Installs from before the setup wizard already generated an AP password; don't send them through it
+    const bool setupKnown = preferences.isKey("setup_ok");
+    const bool legacyInstall = !setupKnown && preferences.isKey("wap");
     preferences.end();
+    logMachineProfile("Loaded", machineProfileSelection.get());
+    if (legacyInstall) {
+        setupDone.set(true);
+    } else if (!setupKnown) {
+        setupDone.persist(); // record "not done" now, or the AP password saved this boot reads as a legacy install next boot
+    }
 
     xTaskCreate(loopTask, "Settings::loop", configMINIMAL_STACK_SIZE * 6, this, 1, &taskHandle);
 }
 
 void Settings::batchUpdate(const SettingsCallback &callback) {
+    // Changed properties mark themselves dirty; the next flush writes them in one NVS session
     callback(this);
-    save();
 }
 
-void Settings::save(bool noDelay) {
-    if (noDelay) {
-        doSave();
-        return;
+bool Settings::save(bool noDelay) { return !noDelay || doSave(); }
+
+void Settings::setTargetSteamTemp(const int target_steam_temp) { targetSteamTemp.set(target_steam_temp); }
+
+void Settings::setTargetWaterTemp(const int target_water_temp) { targetWaterTemp.set(target_water_temp); }
+
+void Settings::setTemperatureOffset(const int temperature_offset) { temperatureOffset.set(temperature_offset); }
+
+void Settings::setPressureOffset(const float pressure_offset) { pressureOffset.set(pressure_offset); }
+
+void Settings::setPressureScaling(const float pressure_scaling) { pressureScaling.set(pressure_scaling); }
+
+void Settings::setScaleFactors(float scale_factor_1, float scale_factor_2) {
+    scaleFactor1.set(scale_factor_1);
+    scaleFactor2.set(scale_factor_2);
+}
+
+void Settings::setHardwareScaleConfiguration(uint16_t sample_rate_sps, float idle_alpha, float active_alpha) {
+    hardwareScaleSampleRateSps.set((sample_rate_sps == 10 || sample_rate_sps == 80) ? sample_rate_sps
+                                                                                    : DEFAULT_HARDWARE_SCALE_SAMPLE_RATE_SPS);
+    hardwareScaleIdleAlpha.set(
+        std::isfinite(idle_alpha) && idle_alpha > 0.0f && idle_alpha <= 1.0f ? idle_alpha : DEFAULT_HARDWARE_SCALE_IDLE_ALPHA);
+    hardwareScaleActiveAlpha.set(std::isfinite(active_alpha) && active_alpha > 0.0f && active_alpha <= 1.0f
+                                     ? active_alpha
+                                     : DEFAULT_HARDWARE_SCALE_ACTIVE_ALPHA);
+}
+
+void Settings::setPreferredScaleSource(const String &scaleSource) {
+    if (scaleSource == "hardware" || scaleSource == "bluetooth" || scaleSource == "auto") {
+        preferredScaleSource.set(scaleSource);
     }
-    dirty = true;
 }
 
-void Settings::setTargetSteamTemp(const int target_steam_temp) {
-    targetSteamTemp = target_steam_temp;
-    save();
+void Settings::setTargetGrindVolume(double target_grind_volume) { targetGrindVolume.set(target_grind_volume); }
+
+void Settings::setTargetGrindDuration(const int target_duration) { targetGrindDuration.set(target_duration); }
+
+void Settings::setBrewDelay(double brew_Delay) { brewDelay.set(std::clamp(brew_Delay, 0.0, 4000.0)); }
+
+void Settings::setGrindDelay(double grind_Delay) { grindDelay.set(std::clamp(grind_Delay, 0.0, 4000.0)); }
+
+void Settings::setDelayAdjust(bool delay_adjust) { delayAdjust.set(delay_adjust); }
+
+void Settings::setStartupMode(const int startup_mode) { startupMode.set(startup_mode); }
+
+void Settings::setStandbyTimeout(int standby_timeout) { standbyTimeout.set(standby_timeout); }
+
+void Settings::setPid(const String &pid) { this->pid.set(pid); }
+
+void Settings::setSteamPid(const String &pid) { steamPid.set(pid); }
+
+void Settings::setHeaterCoordinationEnabled(bool enabled) { heaterCoordinationEnabled.set(enabled); }
+
+void Settings::setHeaterHandoverMs(int handoverMs) {
+    heaterHandoverMs.set(std::clamp(handoverMs, MIN_HEATER_HANDOVER_MS, MAX_HEATER_HANDOVER_MS));
 }
 
-void Settings::setTargetWaterTemp(const int target_water_temp) {
-    targetWaterTemp = target_water_temp;
-    save();
-}
+void Settings::setPumpModelCoeffs(const String &pumpModelCoeffs) { this->pumpModelCoeffs.set(pumpModelCoeffs); }
 
-void Settings::setTemperatureOffset(const int temperature_offset) {
-    temperatureOffset = temperature_offset;
-    save();
-}
+void Settings::setPumpSlipCoeffs(const String &pumpSlipCoeffs) { this->pumpSlipCoeffs.set(pumpSlipCoeffs); }
 
-void Settings::setPressureScaling(const float pressure_scaling) {
-    pressureScaling = pressure_scaling;
-    save();
-}
+void Settings::setWifiSsid(const String &wifiSsid) { this->wifiSsid.set(wifiSsid); }
 
-void Settings::setTargetGrindVolume(double target_grind_volume) {
-    targetGrindVolume = target_grind_volume;
-    save();
-}
+void Settings::setWifiPassword(const String &wifiPassword) { this->wifiPassword.set(wifiPassword); }
 
-void Settings::setTargetGrindDuration(const int target_duration) {
-    targetGrindDuration = target_duration;
-    save();
-}
+void Settings::setWifiApPassword(const String &wifiApPassword) { this->wifiApPassword.set(wifiApPassword); }
 
-void Settings::setBrewDelay(double brew_Delay) {
-    brewDelay = std::clamp(brew_Delay, 0.0, 4000.0);
-    save();
-}
+void Settings::setMdnsName(const String &mdnsName) { this->mdnsName.set(mdnsName); }
 
-void Settings::setGrindDelay(double grind_Delay) {
-    grindDelay = std::clamp(grind_Delay, 0.0, 4000.0);
-    save();
-}
+void Settings::setHomekit(const bool homekit) { this->homekit.set(homekit); }
 
-void Settings::setDelayAdjust(bool delay_adjust) {
-    delayAdjust = delay_adjust;
-    save();
-}
+void Settings::setVolumetricTarget(bool volumetric_target) { volumetricTarget.set(volumetric_target); }
 
-void Settings::setStartupMode(const int startup_mode) {
-    startupMode = startup_mode;
-    save();
-}
+void Settings::setOTAChannel(const String &otaChannel) { this->otaChannel.set(otaChannel); }
 
-void Settings::setStandbyTimeout(int standby_timeout) {
-    standbyTimeout = standby_timeout;
-    save();
-}
+void Settings::setSavedScale(const String &savedScale) { this->savedScale.set(savedScale); }
 
-void Settings::setPid(const String &pid) {
-    this->pid = pid;
-    save();
-}
+void Settings::setSavedScaleName(const String &savedScaleName) { this->savedScaleName.set(savedScaleName); }
 
-void Settings::setPumpModelCoeffs(const String &pumpModelCoeffs) {
-    this->pumpModelCoeffs = pumpModelCoeffs;
-    save();
-}
+void Settings::setBoilerFillActive(bool boiler_fill_active) { boilerFillActive.set(boiler_fill_active); }
 
-void Settings::setWifiSsid(const String &wifiSsid) {
-    this->wifiSsid = wifiSsid;
-    save();
-}
+void Settings::setStartupFillTime(int startup_fill_time) { startupFillTime.set(startup_fill_time); }
 
-void Settings::setWifiPassword(const String &wifiPassword) {
-    this->wifiPassword = wifiPassword;
-    save();
-}
+void Settings::setSteamFillTime(int steam_fill_time) { steamFillTime.set(steam_fill_time); }
 
-void Settings::setWifiApPassword(const String &wifiApPassword) {
-    this->wifiApPassword = wifiApPassword;
-    save();
-}
+void Settings::setSmartGrindActive(bool smart_grind_active) { smartGrindActive.set(smart_grind_active); }
 
-void Settings::setMdnsName(const String &mdnsName) {
-    this->mdnsName = mdnsName;
-    save();
-}
+void Settings::setSetupDone(bool setup_done) { setupDone.set(setup_done); }
 
-void Settings::setHomekit(const bool homekit) {
-    this->homekit = homekit;
-    save();
-}
+void Settings::setMahlkonigActive(bool mahlkonig_active) { mahlkonigActive.set(mahlkonig_active); }
 
-void Settings::setVolumetricTarget(bool volumetric_target) {
-    this->volumetricTarget = volumetric_target;
-    save();
-}
+void Settings::setMahlkonigRecipeProfiles(String profiles) { mahlkonigRecipeProfiles.set(profiles); }
 
-void Settings::setOTAChannel(const String &otaChannel) {
-    this->otaChannel = otaChannel;
-    save();
-}
+void Settings::setSmartGrindIp(String smart_grind_ip) { smartGrindIp.set(smart_grind_ip); }
 
-void Settings::setSavedScale(const String &savedScale) {
-    this->savedScale = savedScale;
-    save();
-}
+void Settings::setSmartGrindMode(int smart_grind_mode) { smartGrindMode.set(smart_grind_mode); }
 
-void Settings::setBoilerFillActive(bool boiler_fill_active) {
-    boilerFillActive = boiler_fill_active;
-    save();
-}
+void Settings::setHomeAssistant(const bool homeAssistant) { this->homeAssistant.set(homeAssistant); }
 
-void Settings::setStartupFillTime(int startup_fill_time) {
-    startupFillTime = startup_fill_time;
-    save();
-}
+void Settings::setHomeAssistantIP(const String &homeAssistantIP) { this->homeAssistantIP.set(homeAssistantIP); }
 
-void Settings::setSteamFillTime(int steam_fill_time) {
-    steamFillTime = steam_fill_time;
-    save();
-}
+void Settings::setHomeAssistantPort(const int homeAssistantPort) { this->homeAssistantPort.set(homeAssistantPort); }
 
-void Settings::setSmartGrindActive(bool smart_grind_active) {
-    smartGrindActive = smart_grind_active;
-    save();
-}
+void Settings::setHomeAssistantTopic(const String &homeAssistantTopic) { this->homeAssistantTopic.set(homeAssistantTopic); }
 
-void Settings::setSmartGrindIp(String smart_grind_ip) {
-    this->smartGrindIp = std::move(smart_grind_ip);
-    save();
-}
+void Settings::setHomeAssistantUser(const String &homeAssistantUser) { this->homeAssistantUser.set(homeAssistantUser); }
 
-void Settings::setSmartGrindMode(int smart_grind_mode) {
-    this->smartGrindMode = smart_grind_mode;
-    save();
-}
-
-void Settings::setHomeAssistant(const bool homeAssistant) {
-    this->homeAssistant = homeAssistant;
-    save();
-}
-
-void Settings::setHomeAssistantIP(const String &homeAssistantIP) {
-    this->homeAssistantIP = homeAssistantIP;
-    save();
-}
-
-void Settings::setHomeAssistantPort(const int homeAssistantPort) {
-    this->homeAssistantPort = homeAssistantPort;
-    save();
-}
-void Settings::setHomeAssistantTopic(const String &homeAssistantTopic) {
-    this->homeAssistantTopic = homeAssistantTopic;
-    save();
-}
-void Settings::setHomeAssistantUser(const String &homeAssistantUser) {
-    this->homeAssistantUser = homeAssistantUser;
-    save();
-}
 void Settings::setHomeAssistantPassword(const String &homeAssistantPassword) {
-    this->homeAssistantPassword = homeAssistantPassword;
-    save();
+    this->homeAssistantPassword.set(homeAssistantPassword);
 }
 
-void Settings::setMomentaryButtons(bool momentary_buttons) {
-    momentaryButtons = momentary_buttons;
-    save();
+void Settings::setMomentaryButtons(bool momentary_buttons) { momentaryButtons.set(momentary_buttons); }
+
+void Settings::setFlushDuration(int seconds) { flushDuration.set(std::clamp(seconds, 0, MAX_FLUSH_DURATION_S)); }
+
+// Clamp to the WarningLevel range so a bad web value can't leave a warning in an undefined state.
+static int clampWarningLevel(int level) {
+    return level < WARNING_LEVEL_IGNORE ? WARNING_LEVEL_IGNORE : (level > WARNING_LEVEL_ERROR ? WARNING_LEVEL_ERROR : level);
 }
 
-void Settings::setTimezone(String timezone) {
-    this->timezone = std::move(timezone);
-    save();
-}
+void Settings::setWarnWaterLevel(int level) { warnWaterLevel.set(clampWarningLevel(level)); }
 
-void Settings::setClockFormat(bool clock_24h_format) {
-    this->clock24hFormat = clock_24h_format;
-    save();
-}
+void Settings::setWarnFlush(int level) { warnFlush.set(clampWarningLevel(level)); }
 
-void Settings::setSelectedProfile(String selected_profile) {
-    this->selectedProfile = std::move(selected_profile);
-    save();
-}
+void Settings::setWarnSteamSwitch(int level) { warnSteamSwitch.set(clampWarningLevel(level)); }
 
-void Settings::setStartupProfile(String startup_profile) {
-    this->startupProfile = std::move(startup_profile);
-    save();
-}
+void Settings::setWarnScaleConnected(int level) { warnScaleConnected.set(clampWarningLevel(level)); }
 
-void Settings::setFavoritedProfiles(std::vector<String> favorited_profiles) {
-    favoritedProfiles = std::move(favorited_profiles);
-    save();
-}
+void Settings::setWarnScaleBattery(int level) { warnScaleBattery.set(clampWarningLevel(level)); }
+
+void Settings::setWarnTemperature(int level) { warnTemperature.set(clampWarningLevel(level)); }
+
+void Settings::setWarnBackflush(int level) { warnBackflush.set(clampWarningLevel(level)); }
+
+void Settings::setWarnDescaling(int level) { warnDescaling.set(clampWarningLevel(level)); }
+
+void Settings::setBackflushIntervalDays(int days) { backflushIntervalDays.set(std::max(0, days)); }
+
+void Settings::setBackflushIntervalShots(int shots) { backflushIntervalShots.set(std::max(0, shots)); }
+
+void Settings::setDescalingIntervalWeeks(int weeks) { descalingIntervalWeeks.set(std::max(0, weeks)); }
+
+void Settings::setDescalingIntervalShots(int shots) { descalingIntervalShots.set(std::max(0, shots)); }
+
+void Settings::setLastBackflushTime(unsigned long time) { lastBackflushTime.set(time); }
+
+void Settings::setLastDescalingTime(unsigned long time) { lastDescalingTime.set(time); }
+
+void Settings::setShotsSinceBackflush(int shots) { shotsSinceBackflush.set(std::max(0, shots)); }
+
+void Settings::setShotsSinceDescaling(int shots) { shotsSinceDescaling.set(std::max(0, shots)); }
+
+void Settings::setTimezone(String timezone) { this->timezone.set(timezone); }
+
+void Settings::setClockFormat(bool clock_24h_format) { clock24hFormat.set(clock_24h_format); }
+
+void Settings::setSelectedProfile(String selected_profile) { selectedProfile.set(selected_profile); }
+
+void Settings::setStartupProfile(String startup_profile) { startupProfile.set(startup_profile); }
+
+void Settings::setFavoritedProfiles(const std::vector<String> &favorited_profiles) { favoritedProfiles.set(favorited_profiles); }
 
 void Settings::addFavoritedProfile(String profile) {
-    if (std::find(favoritedProfiles.begin(), favoritedProfiles.end(), profile) != favoritedProfiles.end()) {
+    std::vector<String> profiles = favoritedProfiles.get();
+    if (std::find(profiles.begin(), profiles.end(), profile) != profiles.end()) {
         return;
     }
-    favoritedProfiles.emplace_back(profile);
-    save();
+    profiles.emplace_back(std::move(profile));
+    favoritedProfiles.set(profiles);
 }
 
 void Settings::removeFavoritedProfile(String profile) {
-    favoritedProfiles.erase(std::remove(favoritedProfiles.begin(), favoritedProfiles.end(), profile), favoritedProfiles.end());
-    favoritedProfiles.shrink_to_fit();
-    save();
+    std::vector<String> profiles = favoritedProfiles.get();
+    profiles.erase(std::remove(profiles.begin(), profiles.end(), profile), profiles.end());
+    favoritedProfiles.set(profiles);
 }
 
 void Settings::setProfileOrder(std::vector<String> profile_order) {
@@ -356,240 +356,104 @@ void Settings::setProfileOrder(std::vector<String> profile_order) {
         }
     }
 
-    profileOrder = std::move(cleaned);
-    save();
+    profileOrder.set(cleaned);
 }
 
-void Settings::setMainBrightness(int main_brightness) {
-    mainBrightness = main_brightness;
-    save();
-}
+void Settings::setMainBrightness(int main_brightness) { mainBrightness.set(main_brightness); }
 
-void Settings::setStandbyBrightness(int standby_brightness) {
-    standbyBrightness = standby_brightness;
-    save();
-}
+void Settings::setStandbyBrightness(int standby_brightness) { standbyBrightness.set(standby_brightness); }
 
 void Settings::setStandbyBrightnessTimeout(int standby_brightness_timeout) {
-    standbyBrightnessTimeout = standby_brightness_timeout;
-    save();
+    standbyBrightnessTimeout.set(standby_brightness_timeout);
 }
 
-void Settings::setWifiApTimeout(int timeout) {
-    wifiApTimeout = timeout;
-    save();
-}
+void Settings::setWifiApTimeout(int timeout) { wifiApTimeout.set(timeout); }
 
-void Settings::setSteamPumpPercentage(float steam_pump_percentage) {
-    steamPumpPercentage = steam_pump_percentage;
-    save();
-}
+void Settings::setSteamPumpPercentage(float steam_pump_percentage) { steamPumpPercentage.set(steam_pump_percentage); }
 
-void Settings::setSteamPumpCutoff(float steam_pump_cutoff) {
-    steamPumpCutoff = steam_pump_cutoff;
-    save();
-}
+void Settings::setSteamPumpCutoff(float steam_pump_cutoff) { steamPumpCutoff.set(steam_pump_cutoff); }
 
-void Settings::setThemeMode(int theme_mode) {
-    themeMode = theme_mode;
-    save();
-}
+void Settings::setThemeMode(int theme_mode) { themeMode.set(theme_mode); }
 
-void Settings::setHistoryIndex(int history_index) {
-    historyIndex = history_index;
-    save();
-}
+void Settings::setStatusDisplayMode(int status_display_mode) { statusDisplayMode.set(status_display_mode); }
 
-void Settings::setSunriseR(int sunrise_r) {
-    sunriseR = sunrise_r;
-    save();
-}
+void Settings::setHistoryIndex(int history_index) { historyIndex.set(history_index); }
 
-void Settings::setSunriseG(int sunrise_g) {
-    sunriseG = sunrise_g;
-    save();
-}
+void Settings::setSunriseR(int sunrise_r) { sunriseR = sunrise_r; }
 
-void Settings::setSunriseB(int sunrise_b) {
-    sunriseB = sunrise_b;
-    save();
-}
+void Settings::setSunriseG(int sunrise_g) { sunriseG = sunrise_g; }
 
-void Settings::setSunriseW(int sunrise_w) {
-    sunriseW = sunrise_w;
-    save();
-}
+void Settings::setSunriseB(int sunrise_b) { sunriseB = sunrise_b; }
 
-void Settings::setSunriseIdle(String hexColor) {
-    sunriseIdle = hexColor;
-    save();
-}
+void Settings::setSunriseW(int sunrise_w) { sunriseW = sunrise_w; }
 
-void Settings::setSunriseActive(String hexColor) {
-    sunriseActive = hexColor;
-    save();
-}
+void Settings::setSunriseIdle(String hexColor) { sunriseIdle.set(hexColor); }
 
-void Settings::setSunriseFinished(String hexColor) {
-    sunriseFinished = hexColor;
-    save();
-}
+void Settings::setSunriseActive(String hexColor) { sunriseActive.set(hexColor); }
 
-void Settings::setSunriseError(String hexColor) {
-    sunriseError = hexColor;
-    save();
-}
+void Settings::setSunriseFinished(String hexColor) { sunriseFinished.set(hexColor); }
 
-void Settings::setSunriseExtBrightness(int sunrise_ext_brightness) {
-    sunriseExtBrightness = sunrise_ext_brightness;
-    save();
-}
+void Settings::setSunriseError(String hexColor) { sunriseError.set(hexColor); }
 
-void Settings::setEmptyTankDistance(int empty_tank_distance) {
-    emptyTankDistance = empty_tank_distance;
-    save();
-}
+void Settings::setSunriseExtBrightness(int sunrise_ext_brightness) { sunriseExtBrightness.set(sunrise_ext_brightness); }
 
-void Settings::setFullTankDistance(int full_tank_distance) {
-    fullTankDistance = full_tank_distance;
-    save();
-}
+void Settings::setEmptyTankDistance(int empty_tank_distance) { emptyTankDistance.set(empty_tank_distance); }
 
-void Settings::setAltRelayFunction(int alt_relay_function) { altRelayFunction = alt_relay_function; }
+void Settings::setFullTankDistance(int full_tank_distance) { fullTankDistance.set(full_tank_distance); }
 
-void Settings::setAutoWakeupEnabled(bool enabled) {
-    autowakeupEnabled = enabled;
-    save();
-}
+void Settings::setAltRelayFunction(int alt_relay_function) { altRelayFunction.set(alt_relay_function); }
 
-void Settings::setAutoWakeupSchedules(const std::vector<AutoWakeupSchedule> &schedules) {
-    autowakeupSchedules = schedules;
-    save();
-}
+void Settings::setAutoWakeupEnabled(bool enabled) { autowakeupEnabled.set(enabled); }
+
+void Settings::setAutoWakeupSchedules(const std::vector<AutoWakeupSchedule> &schedules) { autowakeupSchedules.set(schedules); }
 
 void Settings::setButtonBehavior(int index, String behavior) {
-    if (index < 0 || index >= buttonBehavior.size()) {
+    std::vector<String> behaviors = buttonBehavior.get();
+    if (index < 0 || index >= behaviors.size()) {
         return;
     }
-    buttonBehavior[index] = std::move(behavior);
-    save();
+    behaviors[index] = std::move(behavior);
+    buttonBehavior.set(behaviors);
 }
 
-void Settings::setButtonBehaviorList(const std::vector<String> &behavior_list) {
-    buttonBehavior = behavior_list;
-    save();
-}
+void Settings::setButtonBehaviorList(const std::vector<String> &behavior_list) { buttonBehavior.set(behavior_list); }
 
-void Settings::setCommutationGain(float commutation_gain) {
-    commutationGain = commutation_gain;
-    save();
-}
+void Settings::setCommutationGain(float commutation_gain) { commutationGain.set(commutation_gain); }
 
-void Settings::setConvergenceGain(float convergence_gain) {
-    convergenceGain = convergence_gain;
-    save();
-}
+void Settings::setConvergenceGain(float convergence_gain) { convergenceGain.set(convergence_gain); }
 
-void Settings::setIntegralGain(float integral_gain) {
-    integralGain = integral_gain;
-    save();
-}
+void Settings::setIntegralGain(float integral_gain) { integralGain.set(integral_gain); }
 
-void Settings::setMaxPumpPower(float max_pump_power) {
-    maxPumpPower = max_pump_power;
-    save();
-}
+void Settings::setMaxPumpPower(float max_pump_power) { maxPumpPower.set(max_pump_power); }
 
-void Settings::doSave() {
-    if (!dirty) {
-        return;
+bool Settings::doSave() {
+    // The periodic task and immediate WebUI saves share one Preferences handle.
+    std::lock_guard<std::mutex> lock(saveMutex);
+    if (std::none_of(registry.begin(), registry.end(), [](const PropertyBase *property) { return property->isDirty(); })) {
+        return true;
     }
-    dirty = false;
-    ESP_LOGI("Settings", "Saving settings");
-    preferences.begin(PREFERENCES_KEY, false);
-    preferences.putInt("sm", startupMode);
-    preferences.putInt("ts", targetSteamTemp);
-    preferences.putInt("tw", targetWaterTemp);
-    preferences.putDouble("tgv", targetGrindVolume);
-    preferences.putInt("tgd", targetGrindDuration);
-    preferences.putDouble("del_br", brewDelay);
-    preferences.putDouble("del_gd", grindDelay);
-    preferences.putBool("del_ad", delayAdjust);
-    preferences.putInt("to", temperatureOffset);
-    preferences.putFloat("ps", pressureScaling);
-    preferences.putString("pid", pid);
-    preferences.putString("pmc", pumpModelCoeffs);
-    preferences.putString("ws", wifiSsid);
-    preferences.putString("wp", wifiPassword);
-    preferences.putString("wap", wifiApPassword);
-    preferences.putString("mn", mdnsName);
-    preferences.putBool("hk", homekit);
-    preferences.putBool("vt", volumetricTarget);
-    preferences.putString("oc", otaChannel);
-    preferences.putString("ssc", savedScale);
-    preferences.putBool("bf_a", boilerFillActive);
-    preferences.putInt("bf_su", startupFillTime);
-    preferences.putInt("bf_st", steamFillTime);
-    preferences.putBool("sg_a", smartGrindActive);
-    preferences.putString("sg_i", smartGrindIp);
-    preferences.putBool("sg_t", smartGrindToggle);
-    preferences.putInt("sg_m", smartGrindMode);
-    preferences.putBool("ha_a", homeAssistant);
-    preferences.putString("ha_i", homeAssistantIP);
-    preferences.putInt("ha_p", homeAssistantPort);
-    preferences.putString("ha_t", homeAssistantTopic);
-    preferences.putString("ha_u", homeAssistantUser);
-    preferences.putString("ha_pw", homeAssistantPassword);
-    preferences.putString("tz", timezone);
-    preferences.putBool("clk_24h", clock24hFormat);
-    preferences.putString("sp", selectedProfile);
-    preferences.putString("sup", startupProfile);
-    preferences.putInt("sbt", standbyTimeout);
-    preferences.putBool("mb", momentaryButtons);
-    preferences.putString("fp", implode(favoritedProfiles, ","));
-    preferences.putString("po", implode(profileOrder, ","));
-    preferences.putFloat("spp", steamPumpPercentage);
-    preferences.putFloat("spc", steamPumpCutoff);
-    preferences.putInt("hi", historyIndex);
-    preferences.putBool("ab_en", autowakeupEnabled);
-
-    // Save schedule format
-    String schedulesForSave = "";
-    for (size_t i = 0; i < autowakeupSchedules.size(); i++) {
-        if (i > 0)
-            schedulesForSave += ";";
-        schedulesForSave += autowakeupSchedules[i].time + "|";
-
-        // Convert days array to 7-bit string
-        for (int j = 0; j < 7; j++) {
-            schedulesForSave += autowakeupSchedules[i].days[j] ? "1" : "0";
-        }
+    ESP_LOGI("Settings", "Saving changed settings");
+    if (!preferences.begin(PREFERENCES_KEY, false)) {
+        ESP_LOGE("Settings", "Could not open settings storage");
+        return false;
     }
-    preferences.putString("ab_schedules", schedulesForSave);
-
-    // Display settings
-    preferences.putInt("main_b", mainBrightness);
-    preferences.putInt("standby_b", standbyBrightness);
-    preferences.putInt("standby_bt", standbyBrightnessTimeout);
-    preferences.putInt("wifi_apt", wifiApTimeout);
-    preferences.putInt("theme", themeMode);
-
-    // Sunrise Settings
-    preferences.putString("sr_i", sunriseIdle);
-    preferences.putString("sr_a", sunriseActive);
-    preferences.putString("sr_f", sunriseFinished);
-    preferences.putString("sr_e", sunriseError);
-    preferences.putInt("sr_exb", sunriseExtBrightness);
-    preferences.putInt("sr_ed", emptyTankDistance);
-    preferences.putInt("sr_fd", fullTankDistance);
-    preferences.putInt("alt_relay", altRelayFunction);
-    preferences.putString("btnb", implode(buttonBehavior, ","));
-    preferences.putFloat("p_cm", commutationGain);
-    preferences.putFloat("p_cv", convergenceGain);
-    preferences.putFloat("p_ig", integralGain);
-    preferences.putFloat("p_mp", maxPumpPower);
-
+    const bool profileChanged = machineProfileSelection.isDirty();
+    for (auto *property : registry) {
+        property->store(preferences);
+    }
+    const bool profileSaved =
+        !profileChanged || (preferences.isKey("mc_profile") &&
+                            MachineProfileSelectionCodec::read(preferences, "mc_profile", "") == machineProfileSelection.get());
+    if (!profileSaved) {
+        // Property::store clears dirty before writing; keep a failed snapshot pending.
+        machineProfileSelection.persist();
+        ESP_LOGE("Settings", "Could not persist machine profile selection (free NVS entries: %u)",
+                 static_cast<unsigned>(preferences.freeEntries()));
+    }
     preferences.end();
+    if (profileChanged && profileSaved)
+        logMachineProfile("Selected", machineProfileSelection.get());
+    return profileSaved;
 }
 
 [[noreturn]] void Settings::loopTask(void *arg) {
@@ -598,4 +462,33 @@ void Settings::doSave() {
         settings->doSave();
         vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
+}
+
+void Settings::setPersistentSteamState(bool enabled) {
+    persistentSteamState.set(enabled);
+    save(true);
+}
+
+gm::MachineHardwareSettings Settings::getMachineHardware() const {
+    auto value = defaultMachineHardware();
+    if (ntcBrewNominalResistance.get() > 0)
+        value.ntc_brew_nominal_resistance = ntcBrewNominalResistance.get();
+    if (ntcBrewSeriesResistance.get() > 0)
+        value.ntc_brew_series_resistance = ntcBrewSeriesResistance.get();
+    if (ntcBrewSupplyVoltage.get() > 0)
+        value.ntc_brew_supply_voltage = ntcBrewSupplyVoltage.get();
+    if (ntcBrewBeta.get() > 0)
+        value.ntc_brew_beta = ntcBrewBeta.get();
+    if (ntcSteamNominalResistance.get() > 0)
+        value.ntc_steam_nominal_resistance = ntcSteamNominalResistance.get();
+    if (ntcSteamSeriesResistance.get() > 0)
+        value.ntc_steam_series_resistance = ntcSteamSeriesResistance.get();
+    if (ntcSteamSupplyVoltage.get() > 0)
+        value.ntc_steam_supply_voltage = ntcSteamSupplyVoltage.get();
+    if (ntcSteamBeta.get() > 0)
+        value.ntc_steam_beta = ntcSteamBeta.get();
+    value.tank_level_enabled = tankLevelEnabled.get();
+    value.steam_level_enabled = steamLevelEnabled.get();
+    value.steam_level_debounce_checks = steamLevelDebounceChecks.get();
+    return value;
 }
