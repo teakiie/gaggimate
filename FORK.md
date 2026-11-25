@@ -54,18 +54,17 @@ as well as **Update Display**.
 
 ## 3. The complete fork delta
 
-`git diff d941710..master` — apart from this documentation (`FORK.md`,
-`CLAUDE.md`, `AGENTS.md`, the README banner), the fork is **four changes**,
-nothing else:
+`git diff v1.10.0..master` (substitute the upstream tag currently merged) — apart
+from this documentation (`FORK.md`, `CLAUDE.md`, `AGENTS.md`, the README banner),
+the fork is **five changes**, nothing else:
 
 | # | Change | File |
 |---|---|---|
 | 1 | `RELEASE_URL` repointed to this fork, marked `FORK PATCH` in the source | `src/display/plugins/WebUIPlugin.h:22` |
 | 2 | **Added** the release pipeline | `.github/workflows/release.yml` |
-| 3 | **Deleted** inherited upstream tag-build workflow | `.github/workflows/build.yml` |
-| 4 | **Deleted** inherited upstream nightly workflow | `.github/workflows/build-nightly.yml` |
-
-| 5 | **Added** upstream release watcher | `.github/workflows/upstream-watch.yml` |
+| 3 | **Added** the upstream release watcher | `.github/workflows/upstream-watch.yml` |
+| 4 | **Deleted** inherited upstream tag-build workflow | `.github/workflows/build.yml` |
+| 5 | **Deleted** inherited upstream nightly workflow | `.github/workflows/build-nightly.yml` |
 
 There are **no modifications to firmware behaviour yet**. The fork so far is pure
 delivery plumbing; any feature work is additive on top of this.
