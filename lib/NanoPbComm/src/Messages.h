@@ -1,14 +1,8 @@
 #ifndef NANOPBCOMM_MESSAGES_H
 #define NANOPBCOMM_MESSAGES_H
 
-// Short, namespaced aliases for the package-prefixed nanopb types so library
-// internals read cleanly (gm::Payload instead of gaggimate_Payload). These are
-// used only inside NanoPbComm -- the high-level GaggiMateClient/Server API
-// exposes plain C++ types, so firmware code never sees nanopb structs.
-//
-// Tag/descriptor/init macros (gaggimate_*_tag, gaggimate_*_msg,
-// gaggimate_*_init_zero) are macros, not types, so they are referenced with
-// their full names where needed.
+// NanoPbComm-internal aliases for nanopb types (gm::Payload vs gaggimate_Payload); firmware never sees nanopb structs.
+// The gaggimate_*_tag/_msg/_init_zero macros are not types, so they keep their full names.
 
 #include "gaggimate.pb.h"
 
@@ -17,15 +11,18 @@ namespace gm {
 using Frame = gaggimate_Frame;
 using Payload = gaggimate_Payload;
 
+using MachineHardwareSettings = gaggimate_MachineHardwareSettings;
 using Ping = gaggimate_Ping;
 using BoilerControl = gaggimate_BoilerControl;
 using PumpControl = gaggimate_PumpControl;
 using RelayControl = gaggimate_RelayControl;
-using PidSettings = gaggimate_PidSettings;
+using HeaterSettings = gaggimate_HeaterSettings;
 using PumpSettings = gaggimate_PumpSettings;
 using AutotuneRequest = gaggimate_AutotuneRequest;
 using PressureScale = gaggimate_PressureScale;
 using Tare = gaggimate_Tare;
+using HardwareScaleTare = gaggimate_HardwareScaleTare;
+using ScaleFactors = gaggimate_ScaleFactors;
 using LedChannel = gaggimate_LedChannel;
 using LedControl = gaggimate_LedControl;
 
@@ -37,6 +34,7 @@ using BoilerReading = gaggimate_BoilerReading;
 using ButtonState = gaggimate_ButtonState;
 using AutotuneResult = gaggimate_AutotuneResult;
 using VolumetricMeasurement = gaggimate_VolumetricMeasurement;
+using ScaleMeasurement = gaggimate_ScaleMeasurement;
 using TofMeasurement = gaggimate_TofMeasurement;
 using Error = gaggimate_Error;
 

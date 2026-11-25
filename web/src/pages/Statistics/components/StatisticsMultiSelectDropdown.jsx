@@ -10,12 +10,21 @@ import {
   STATISTICS_DROPDOWN_PANEL_SURFACE_CLASS,
   STATISTICS_DROPDOWN_PANEL_SURFACE_STYLE,
 } from './statisticsDropdownSurface';
+import { Trans, useLingui } from '@lingui/react/macro';
 
 const LONG_PRESS_MS = 220;
 const MOVE_CANCEL_PX = 10;
 const STATISTICS_MULTISELECT_PANEL_CLASS = `absolute top-full left-0 mt-2 w-[min(92vw,28rem)] ${STATISTICS_DROPDOWN_PANEL_SURFACE_CLASS}`;
 
 // Reusable multiselect dropdown with desktop modifiers and touch "paint" selection.
+function getBrowserWindow() {
+  return globalThis.window;
+}
+
+function getBrowserDocument() {
+  return globalThis.document;
+}
+
 function normalizeSearchText(value) {
   return String(value ?? '')
     .toLowerCase()
@@ -80,6 +89,8 @@ function StatisticsMultiSelectRow({
   onCirclePointerDown,
   onCircleClick,
 }) {
+  const { t } = useLingui();
+  const itemName = item.primary || item.id;
   return (
     <div
       data-stat-multi-item-id={item.id}
@@ -89,7 +100,7 @@ function StatisticsMultiSelectRow({
     >
       <button
         type='button'
-        aria-label={`${isSelected ? 'Deselect' : 'Select'} ${item.primary || item.id}`}
+        aria-label={isSelected ? t`Deselect ${itemName}` : t`Select ${itemName}`}
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border transition-colors ${getAccentCircleClasses(accentTone, isSelected)}`}
         onClick={event => onCircleClick(item.id, index, event)}
         onPointerDown={event => {
@@ -119,9 +130,12 @@ function StatisticsMultiSelectRow({
       {onTogglePin ? (
         <button
           type='button'
-          aria-label={`${item.isPinned ? 'Unpin' : 'Pin'} ${item.primary || item.id}`}
+          aria-label={item.isPinned ? t`Unpin ${itemName}` : t`Pin ${itemName}`}
           aria-disabled={!item.isPinned && !!item.pinDisabledReason}
-          title={item.pinDisabledReason || `${item.isPinned ? 'Unpin' : 'Pin'} ${singularLabel}`}
+          title={
+            item.pinDisabledReason ||
+            (item.isPinned ? t`Unpin ${singularLabel}` : t`Pin ${singularLabel}`)
+          }
           className={getAnalyzerIconButtonClasses({
             tone: item.isPinned ? 'primary' : 'subtle',
             className: `h-5 w-5 shrink-0 bg-transparent p-0 text-[11px] ${
@@ -143,17 +157,19 @@ function StatisticsMultiSelectRow({
 
 export function StatisticsMultiSelectDropdown({
   label,
+  itemLabel,
   items,
   selectedIds,
   onChange,
   onTogglePin,
   disabled = false,
   accentTone = 'neutral',
-  emptyText = 'Select...',
+  emptyText,
   maxVisibleItems = 12,
   triggerClassName = 'h-11 min-h-0',
   rootClassName = '',
 }) {
+  const { t } = useLingui();
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
   const listRef = useRef(null);
@@ -161,11 +177,13 @@ export function StatisticsMultiSelectDropdown({
   const suppressRowClickRef = useRef(false);
   const touchStateRef = useRef(null);
   const latestSelectedSetRef = useRef(new Set());
+  const onChangeRef = useRef(onChange);
 
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
 
+  onChangeRef.current = onChange;
   const selectedSet = useMemo(() => new Set(selectedIds || []), [selectedIds]);
   latestSelectedSetRef.current = selectedSet;
   const normalizedSearchTerm = normalizeSearchText(searchTerm);
@@ -189,7 +207,7 @@ export function StatisticsMultiSelectDropdown({
   const commitSelection = nextSet => {
     latestSelectedSetRef.current = new Set(nextSet);
     const next = buildOrderedSelection(items || [], nextSet);
-    onChange?.(next);
+    onChangeRef.current?.(next);
   };
 
   const setSingleSelection = (id, index) => {
@@ -269,10 +287,11 @@ export function StatisticsMultiSelectDropdown({
       clearTimeout(state.timer);
     }
 
-    if (typeof window !== 'undefined') {
-      window.removeEventListener('pointermove', state.onMove);
-      window.removeEventListener('pointerup', state.onUp);
-      window.removeEventListener('pointercancel', state.onCancel);
+    const browserWindow = getBrowserWindow();
+    if (browserWindow) {
+      browserWindow.removeEventListener('pointermove', state.onMove);
+      browserWindow.removeEventListener('pointerup', state.onUp);
+      browserWindow.removeEventListener('pointercancel', state.onCancel);
     }
 
     touchStateRef.current = null;
@@ -324,7 +343,7 @@ export function StatisticsMultiSelectDropdown({
         return;
       }
 
-      const el = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
+      const el = getBrowserDocument()?.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
       const row = el?.closest?.('[data-stat-multi-item-id]');
       const hitId = row?.getAttribute?.('data-stat-multi-item-id');
       if (!hitId || current.visitedIds.has(hitId)) return;
@@ -344,14 +363,15 @@ export function StatisticsMultiSelectDropdown({
     state.onCancel = endGesture;
     // Long-press turns the selection circle into a touch-friendly "paint"
     // gesture so users can sweep across many rows without modifier keys.
-    state.timer = window.setTimeout(() => beginPaintMode(state), LONG_PRESS_MS);
+    state.timer = getBrowserWindow()?.setTimeout(() => beginPaintMode(state), LONG_PRESS_MS);
 
     touchStateRef.current = state;
 
-    if (typeof window !== 'undefined') {
-      window.addEventListener('pointermove', onMove, { passive: true });
-      window.addEventListener('pointerup', endGesture, { passive: true });
-      window.addEventListener('pointercancel', endGesture, { passive: true });
+    const browserWindow = getBrowserWindow();
+    if (browserWindow) {
+      browserWindow.addEventListener('pointermove', onMove, { passive: true });
+      browserWindow.addEventListener('pointerup', endGesture, { passive: true });
+      browserWindow.addEventListener('pointercancel', endGesture, { passive: true });
     }
   };
 
@@ -374,11 +394,12 @@ export function StatisticsMultiSelectDropdown({
       }
     };
 
-    document.addEventListener('pointerdown', handleDocumentPointerDown);
-    document.addEventListener('keydown', handleKeyDown);
+    const browserDocument = getBrowserDocument();
+    browserDocument?.addEventListener('pointerdown', handleDocumentPointerDown);
+    browserDocument?.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('pointerdown', handleDocumentPointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
+      browserDocument?.removeEventListener('pointerdown', handleDocumentPointerDown);
+      browserDocument?.removeEventListener('keydown', handleKeyDown);
     };
   }, [open]);
 
@@ -391,33 +412,39 @@ export function StatisticsMultiSelectDropdown({
 
   useEffect(() => {
     if (!open) return;
-    const timer = window.setTimeout(() => {
+    const timer = getBrowserWindow()?.setTimeout(() => {
       listRef.current?.querySelector?.('input')?.focus?.();
     }, 0);
-    return () => clearTimeout(timer);
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   }, [open]);
 
   // Prune stale selections when the available items change (e.g. after a source switch).
-  // onChange is intentionally excluded: it is not memoized and including it would cause
-  // this effect to run on every render without any actual item/selection change.
+  // The latest callback is read from a ref so this effect only tracks data changes.
   useEffect(() => {
     const validIds = new Set((items || []).map(item => item.id).filter(Boolean));
     const pruned = (selectedIds || []).filter(id => validIds.has(id));
     if (pruned.length !== (selectedIds || []).length) {
-      onChange?.(pruned);
+      onChangeRef.current?.(pruned);
     }
-  }, [items, selectedIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [items, selectedIds]);
 
   const selectedCount = selectedSet.size;
-  const triggerText = selectedCount > 0 ? `${label} (${selectedCount})` : emptyText;
+  const triggerText = selectedCount > 0 ? `${label} (${selectedCount})` : emptyText || t`Select...`;
+  const labelLower = String(label ?? '').toLowerCase();
+  const pinnedToggleLabel = showPinnedOnly
+    ? t`Show all ${labelLower}`
+    : t`Show pinned only ${labelLower}`;
   const panelMaxHeight = Math.max(8, Number(maxVisibleItems) || 12) * 36;
-  const singularLabel = getSingularLabel(label);
+  const singularLabel = itemLabel || getSingularLabel(label);
 
   return (
     <div ref={rootRef} className={`relative ${rootClassName}`.trim()}>
       <button
         ref={triggerRef}
         type='button'
+        data-statistics-multiselect-trigger
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup='menu'
@@ -447,14 +474,14 @@ export function StatisticsMultiSelectDropdown({
                 type='text'
                 value={searchTerm}
                 onInput={e => setSearchTerm(e.target.value)}
-                placeholder={`Search ${label.toLowerCase()}...`}
+                placeholder={t`Search ${labelLower}...`}
                 className='input input-sm input-bordered border-base-content/10 bg-base-100/70 h-8 min-h-0 w-full flex-1 text-xs'
               />
               {onTogglePin ? (
                 <button
                   type='button'
-                  aria-label={`${showPinnedOnly ? 'Show all' : 'Show pinned only'} ${label.toLowerCase()}`}
-                  title={`${showPinnedOnly ? 'Show all' : 'Show pinned only'} ${label.toLowerCase()}`}
+                  aria-label={pinnedToggleLabel}
+                  title={pinnedToggleLabel}
                   onClick={() => setShowPinnedOnly(value => !value)}
                   className={getAnalyzerIconButtonClasses({
                     tone: showPinnedOnly ? 'primary' : 'subtle',
@@ -475,7 +502,7 @@ export function StatisticsMultiSelectDropdown({
           >
             {filteredItems.length === 0 ? (
               <div className='px-2 py-3 text-xs opacity-60'>
-                {showPinnedOnly ? 'No pinned items found.' : 'No items found.'}
+                {showPinnedOnly ? t`No pinned items found.` : t`No items found.`}
               </div>
             ) : (
               filteredItems.map((item, index) => {
@@ -504,8 +531,12 @@ export function StatisticsMultiSelectDropdown({
           </div>
 
           <div className='border-base-content/8 flex items-center justify-between border-t px-2 py-1.5 text-[10px] opacity-60'>
-            <span>Shift = Range</span>
-            <span>Cmd/Ctrl = Add</span>
+            <span>
+              <Trans>Shift = Range</Trans>
+            </span>
+            <span>
+              <Trans>Cmd/Ctrl = Add</Trans>
+            </span>
           </div>
         </div>
       )}

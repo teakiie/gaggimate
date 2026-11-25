@@ -44,6 +44,11 @@ extern void action_on_standby(lv_event_t *e);
 extern void action_on_screen_load(lv_event_t *e);
 extern void action_on_screen_swipe(lv_event_t *e);
 extern void action_on_info_screen(lv_event_t *e);
+extern void action_on_warning_back(lv_event_t *e);
+extern void action_on_warning_ignore(lv_event_t *e);
+extern void action_on_profile_detail_toggle(lv_event_t *e);
+extern void action_on_set_dose(lv_event_t *e);
+extern void action_on_welcome_continue(lv_event_t *e);
 
 #ifdef __cplusplus
 }

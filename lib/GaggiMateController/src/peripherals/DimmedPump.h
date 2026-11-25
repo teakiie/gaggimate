@@ -10,7 +10,7 @@ class DimmedPump : public Pump {
   public:
     enum class ControlMode { POWER, PRESSURE, FLOW };
 
-    DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressureSensor);
+    DimmedPump(uint8_t ssr_pin, uint8_t sense_pin, PressureSensor *pressureSensor, PressureControlRate controlRate);
     ~DimmedPump() = default;
 
     void setup() override;
@@ -23,16 +23,17 @@ class DimmedPump : public Pump {
     float getPuckResistance();
     float getPressureTarget() { return _ctrlPressure; }
     float getFlowTarget() { return _ctrlFlow; }
-    float getPowerTarget() { return _power; }
     float *getPumpPowerPtr() override { return &_power; } // For external pump control
     float *getPumpFlowPtr() { return &_currentFlow; }     // For thermal feedforward
-    int *getValveStatusPtr() { return &_valveStatus; }    // For thermal feedforward valve state
+    float getPumpedWater() { return _pumpedWater; }
+    int *getValveStatusPtr() { return &_valveStatus; } // For thermal feedforward valve state
     void tare();
 
     void setFlowTarget(float targetFlow, float pressureLimit);
     void setPressureTarget(float targetPressure, float flowLimit);
     void setPumpFlowCoeff(float oneBarFlow, float nineBarFlow);
     void setPumpFlowPolyCoeffs(float a, float b, float c, float d);
+    void setPumpSlipPolyCoeffs(float a, float b, float c, float d);
     void setGains(float commutationGain, float convergenceGain, float integralGain);
     void stop();
     void fullPower();
@@ -44,6 +45,7 @@ class DimmedPump : public Pump {
     uint8_t _sense_pin;
     PSM _psm;
     PressureSensor *_pressureSensor;
+    const PressureControlRate _controlRate;
     PressureController _pressureController;
 
     xTaskHandle taskHandle;
@@ -56,6 +58,7 @@ class DimmedPump : public Pump {
     float _currentPressure = 0.0f;
     float _currentFlow = 0.0f;
     float _lastPressure = 0.0f;
+    float _pumpedWater = 0.0f;
     int _valveStatus = 0;
     int _cps = MAX_FREQ;
     bool _binaryMode = false;
@@ -66,7 +69,8 @@ class DimmedPump : public Pump {
     static constexpr float MAX_PRESSURE = 15.0f;
     static constexpr float MAX_FREQ = 60.0f;
 
-    void updatePower();
+    void updatePower(bool freshPressure, float sampleTime, float elapsed);
+    int64_t _lastUpdateUs = 0;
     void onPressureUpdate(float pressure);
 
     const char *LOG_TAG = "DimmedPump";

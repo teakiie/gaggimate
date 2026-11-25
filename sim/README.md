@@ -39,7 +39,9 @@ pio run -e display-sim -t run          # build + launch (also: ./.pio/build/disp
 IDE (CLion/VSCode) it shows up under the `display-sim` environment as the
 **Run Simulator** task, so you can build and launch the sim with one click.
 
-- **Interact** with the mouse (it acts as the touchscreen).
+- **Interact** with the mouse (it acts as the touchscreen). Keys `1` and `2` press
+  and release the brew and steam inputs of the controller board (hold both for
+  the combined third button, hold one for a long press).
 - **WebUI**: open <http://localhost:8080/> while it runs (port 80 is remapped to
   8080 so it needs no root). Live status streams over the WebSocket just like on
   the device.
@@ -51,6 +53,13 @@ IDE (CLion/VSCode) it shows up under the `display-sim` environment as the
   # convert to PNG on macOS: sips -s format png shot.bmp --out shot.png
   ```
 
+- **SD card**: start with `GAGGIMATE_SIM_SD=1` to mount a simulated card backed by `sim_data/sdcard`
+  (profile images, history on SD). Without it the sim behaves like a panel without a card.
+- **Bluetooth scale**: keys `3` (empty scale), `4` (empty dosing cup, 62.4 g), `5` / `6` (cup with 18.0 g / 20.5 g),
+  `t` (tare) and `0` (scale off) drive a simulated scale, so weight-based features and Smart Dose can be tried.
+- **AP mode**: `--ap` clears the Wi-Fi credentials, so the display falls back to
+  its access point like a fresh device (setup wizard Wi-Fi step). The next run
+  without it seeds the sim network again.
 - **State** (settings, profiles, shot history) persists under `sim_data/`
   (git-ignored). Delete it to start fresh.
 

@@ -7,9 +7,7 @@
 // Shared protocol UUIDs and helpers used by both ends.
 namespace gm_proto {
 
-// BLE service + characteristics. A single TX/RX pair carries framed nanopb
-// datagrams (replacing the old one-characteristic-per-message design). The
-// service UUID is kept so the display scan logic is unchanged.
+// BLE service + chars: one TX/RX pair carries framed nanopb datagrams; the service UUID predates the framed protocol.
 static constexpr const char *SERVICE_UUID = "e75bc5b6-ff6e-4337-9d31-0c128f2e6e68";
 // Controller (server) -> display (client) notifications.
 static constexpr const char *TX_CHAR_UUID = "87654321-4321-8765-4321-cba987654321";
@@ -17,11 +15,17 @@ static constexpr const char *TX_CHAR_UUID = "87654321-4321-8765-4321-cba98765432
 static constexpr const char *RX_CHAR_UUID = "12345678-1234-5678-1234-123456789abc";
 // Legacy read-only system-info characteristic (JSON), kept for external readers.
 static constexpr const char *INFO_CHAR_UUID = "f8d7203b-e00c-48e2-83ba-37ff49cdba74";
+// Legacy error characteristic; displays <= v1.8.1 dereference it unchecked, so the server keeps an inert stub (GM-221).
+static constexpr const char *LEGACY_ERROR_CHAR_UUID = "d6676ec7-820c-41de-820d-95620749003b";
 
-// Protocol/schema version. Bump on any breaking change to gaggimate.proto so a
-// display talking to an out-of-date controller (or vice versa) can detect the
-// mismatch. Carried in SystemInfo.protocol_version.
-static constexpr uint32_t PROTOCOL_VERSION = 3;
+// Protocol 8 replaces PidSettings with HeaterSettings; controllers keep heaters off until they receive it.
+// Protocol 12 adds independent system/barista lighting configuration.
+// Protocol 13 adds effects to LED channel snapshots and the two onboard outputs.
+// Protocol 16 gives hardware-scale tare its own command; Tare resets pump volume only.
+// LED functions are display-side; hardware configuration version 7 removes them.
+// LED instructions include animation minimum brightness and cycle time.
+// Update controller and display together.
+static constexpr uint32_t PROTOCOL_VERSION = 16;
 
 // Outbound priorities (higher wins in the queue).
 enum Priority : uint8_t {
@@ -31,35 +35,32 @@ enum Priority : uint8_t {
     PRIO_HIGH = 200,    // ping, error
 };
 
-// Per-family device-index space for the coalescing key. Keeps keys dense so the
-// queue's reverse-lookup table stays small.
+// Per-family device-index space for the coalescing key; keeps keys dense so the queue's reverse-lookup stays small.
 static constexpr uint16_t MAX_DEVICES = 8;
 
-// Coalescing key: a (message family, device index) pair so repeated updates for
-// the same component collapse to the latest value. Device-less messages map to
-// index 0. Keys stay below which_content_max * MAX_DEVICES.
+// Coalescing key (family, device index): repeated updates for one component collapse to the latest value.
 inline uint16_t coalescingKey(const gm::Payload &p) {
-    uint16_t index = 0;
+    uint16_t deviceIndex = 0;
     switch (p.which_content) {
     case gaggimate_Payload_boiler_tag:
-        index = p.content.boiler.index;
+        deviceIndex = p.content.boiler.index;
         break;
     case gaggimate_Payload_pump_tag:
-        index = p.content.pump.index;
+        deviceIndex = p.content.pump.index;
         break;
     case gaggimate_Payload_relay_tag:
-        index = p.content.relay.index;
+        deviceIndex = p.content.relay.index;
         break;
     case gaggimate_Payload_button_tag:
-        index = p.content.button.index;
+        deviceIndex = p.content.button.index;
         break;
     default:
-        index = 0;
+        deviceIndex = 0;
         break;
     }
-    if (index >= MAX_DEVICES)
-        index = MAX_DEVICES - 1;
-    return static_cast<uint16_t>(p.which_content) * MAX_DEVICES + index;
+    if (deviceIndex >= MAX_DEVICES)
+        deviceIndex = MAX_DEVICES - 1;
+    return static_cast<uint16_t>(p.which_content) * MAX_DEVICES + deviceIndex;
 }
 
 inline uint8_t defaultPriority(pb_size_t which) {
@@ -73,6 +74,7 @@ inline uint8_t defaultPriority(pb_size_t which) {
         return PRIO_CONTROL;
     case gaggimate_Payload_sensor_tag:
     case gaggimate_Payload_volumetric_tag:
+    case gaggimate_Payload_scale_tag:
     case gaggimate_Payload_tof_tag:
         return PRIO_LOW;
     default:

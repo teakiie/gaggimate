@@ -1,8 +1,8 @@
+import { Trans } from '@lingui/react/macro';
 import { CompareShotCharts } from '../../ShotAnalyzer/components/shotChart/CompareShotCharts';
 import { STATISTICS_SECTION_TITLE_CLASS } from './statisticsUi';
 
-const STATISTICS_COMPARE_PANEL_CLASS =
-  'bg-base-100 border-base-content/10 rounded-xl border shadow-sm';
+const STATISTICS_COMPARE_PANEL_CLASS = 'app-card-surface rounded-xl';
 
 export function StatisticsShotCompareSection({
   compareEntries,
@@ -14,30 +14,39 @@ export function StatisticsShotCompareSection({
   if (!Array.isArray(compareEntries) || compareEntries.length === 0) return null;
 
   const content = (
-    <CompareShotCharts
-      compareEntries={compareEntries}
-      compareTargetDisplayMode={compareTargetDisplayMode}
-      onCompareTargetDisplayModeChange={onCompareTargetDisplayModeChange}
-      showPhaseAnnotations={false}
-      showStopAnnotations={false}
-      showBrewModeAnnotation={false}
-      showCompareAnnotationToggle={false}
-      enableDualMainChartAnnotations={false}
-      showMainChartTitle={false}
-      detailChartTitleVariant='legend'
-      enableHoverInfo={true}
-      compareTooltipMode='compareTitleOnly'
-      showCompareShotLegend={false}
-      shotStylePreset='statistics'
-      showWeightInMainChart={false}
-      showWeightFlowInMainChart={false}
-    />
+    <>
+      <p className='text-base-content/60 px-2 text-xs'>
+        <Trans>Showing up to 100 latest shots. Refine with filters.</Trans>
+      </p>
+      <CompareShotCharts
+        compareEntries={compareEntries}
+        compareTargetDisplayMode={compareTargetDisplayMode}
+        onCompareTargetDisplayModeChange={onCompareTargetDisplayModeChange}
+        showPhaseAnnotations={false}
+        showStopAnnotations={false}
+        showBrewModeAnnotation={false}
+        showCompareAnnotationToggle={false}
+        enableDualMainChartAnnotations={false}
+        showMainChartTitle={false}
+        detailChartTitleVariant='legend'
+        enableHoverInfo={true}
+        compareTooltipMode='compareTitleOnly'
+        showCompareShotLegend={false}
+        shotStylePreset='statistics'
+        showWeightInMainChart={false}
+        showWeightFlowInMainChart={false}
+      />
+    </>
   );
 
   if (embedded) {
     return (
       <div className='space-y-2'>
-        {showTitle && <h3 className={STATISTICS_SECTION_TITLE_CLASS}>Shot Charts</h3>}
+        {showTitle && (
+          <h3 className={STATISTICS_SECTION_TITLE_CLASS}>
+            <Trans>Shot Charts</Trans>
+          </h3>
+        )}
         {content}
       </div>
     );
@@ -45,9 +54,13 @@ export function StatisticsShotCompareSection({
 
   return (
     <div className='space-y-2'>
-      {showTitle && <h3 className={STATISTICS_SECTION_TITLE_CLASS}>Shot Charts</h3>}
+      {showTitle && (
+        <h3 className={STATISTICS_SECTION_TITLE_CLASS}>
+          <Trans>Shot Charts</Trans>
+        </h3>
+      )}
 
-      <div className={`${STATISTICS_COMPARE_PANEL_CLASS} p-4`}>{content}</div>
+      <div className={`${STATISTICS_COMPARE_PANEL_CLASS} px-1.5 py-2 sm:px-2`}>{content}</div>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 #include "images.h"
 
-const ext_img_desc_t images[36] = {
+const ext_img_desc_t images[46] = {
     {"angle-down-40x40", &img_angle_down_40x40},
     {"angle-left-40x40", &img_angle_left_40x40},
     {"angle-right-40x40", &img_angle_right_40x40},
@@ -15,6 +15,7 @@ const ext_img_desc_t images[36] = {
     {"floppy-disks-30x30", &img_floppy_disks_30x30},
     {"flowmeter", &img_flowmeter},
     {"indicator-small", &img_indicator_small},
+    {"indicator-small-inside", &img_indicator_small_inside},
     {"logo", &img_logo},
     {"minus-small-40x40", &img_minus_small_40x40},
     {"mug-hot-alt-80x80", &img_mug_hot_alt_80x80},
@@ -26,7 +27,6 @@ const ext_img_desc_t images[36] = {
     {"refresh-20x20", &img_refresh_20x20},
     {"settings-40x40", &img_settings_40x40},
     {"tachometer-fast-40x40", &img_tachometer_fast_40x40},
-    {"tap-60x60", &img_tap_60x60},
     {"thermometer-half-40x40", &img_thermometer_half_40x40},
     {"wifi-20x20", &img_wifi_20x20},
     {"wind-40x40", &img_wind_40x40},
@@ -34,7 +34,17 @@ const ext_img_desc_t images[36] = {
     {"gallery", &img_gallery},
     {"list", &img_list},
     {"clock-future-past-40x40", &img_clock_future_past_40x40},
-    {"indicator", &img_indicator},
     {"settings-80x80", &img_settings_80x80},
-    {"info-80x80", &img_info_80x80},
+    {"info-40x40", &img_info_40x40},
+    {"light-switch-off-20x20", &img_light_switch_off_20x20},
+    {"link-slash-alt-20x20", &img_link_slash_alt_20x20},
+    {"raindrops-filled-20x20", &img_raindrops_filled_20x20},
+    {"high-temperature-alert-20x20", &img_high_temperature_alert_20x20},
+    {"tint-slash-20x20", &img_tint_slash_20x20},
+    {"battery-exclamation-20x20", &img_battery_exclamation_20x20},
+    {"tap-48x48", &img_tap_48x48},
+    {"broom", &img_broom},
+    {"dosing_cup_40x40", &img_dosing_cup_40x40},
+    {"portafilter_40x40", &img_portafilter_40x40},
+    {"coffee_beans_three_40x40", &img_coffee_beans_three_40x40},
 };
